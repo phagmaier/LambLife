@@ -472,48 +472,40 @@ Don't build visualization first. Get the simulation running headless with loggin
 
 ---
 
-## 15. Implementation Recommendations
-
-### 15.1 Language Choice
-
-**Rust** is the recommended implementation language. The simulation involves millions of tree operations per second, and Rust's ownership model naturally handles the expression trees without garbage collection pauses. If Rust is not in your skillset, **C++** is the next best choice, followed by **Go** or **Julia**.
-
-Python is not recommended for the core simulation (too slow for this scale). However, Python is excellent for analysis scripts, plotting, and prototyping individual components (e.g., test your reducer in Python first, then port to Rust).
-
-### 15.2 Module Structure
+### 15.1 Module Structure
 
 Organize the codebase into these modules:
 
 ```
 src/
-  expr.rs          — Expression type, de Bruijn operations, hashing, display
-  reduce.rs        — Beta reduction engine with step/size limits
-  grid.rs          — 2D toroidal grid, cell types, neighbor iteration
-  organism.rs      — Organism struct, energy accounting
-  resource.rs      — Resource types, biome generation, injection logic
-  interaction.rs   — Interaction protocol, output handler, similarity detection
-  mutation.rs      — Mutation operators, random expression generation
-  simulation.rs    — Main tick loop, orchestration
-  metrics.rs       — Metric collection, logging, snapshot serialization
-  config.rs        — All tunable parameters in one place
-  main.rs          — CLI argument parsing, run loop, optional visualization
+  expr.zig          — Expression type, de Bruijn operations, hashing, display
+  reduce.zig        — Beta reduction engine with step/size limits
+  grid.zig          — 2D toroidal grid, cell types, neighbor iteration
+  organism.zig      — Organism struct, energy accounting
+  resource.zig      — Resource types, biome generation, injection logic
+  interaction.zig   — Interaction protocol, output handler, similarity detection
+  mutation.zig      — Mutation operators, random expression generation
+  simulation.zig    — Main tick loop, orchestration
+  metrics.zig       — Metric collection, logging, snapshot serialization
+  config.zig        — All tunable parameters in one place
+  main.zig          — CLI argument parsing, run loop, optional visualization
 ```
 
 ### 15.3 Build Order
 
 Build and test in this order:
 
-1. **expr.rs + reduce.rs** — Get expressions and reduction working first. Write thorough unit tests: verify that `App(Lam(Var(0)), X)` reduces to `X` for various X, that the step limit works, that size limit aborts correctly, that index shifting is correct. This is the foundation; bugs here will produce mysterious behavior later.
+1. **expr.zig + reduce.zig** — Get expressions and reduction working first. Write thorough unit tests: verify that `App(Lam(Var(0)), X)` reduces to `X` for various X, that the step limit works, that size limit aborts correctly, that index shifting is correct. This is the foundation; bugs here will produce mysterious behavior later.
 
-2. **mutation.rs** — Implement all mutation operators. Test that they always produce valid expressions (no out-of-scope variable indices). Generate 10,000 random mutations and verify all outputs are valid.
+2. **mutation.zig** — Implement all mutation operators. Test that they always produce valid expressions (no out-of-scope variable indices). Generate 10,000 random mutations and verify all outputs are valid.
 
-3. **grid.rs + organism.rs + resource.rs** — Grid mechanics, placement, neighbor lookup, resource injection. Test toroidal wrapping.
+3. **grid.zig + organism.zig + resource.zig** — Grid mechanics, placement, neighbor lookup, resource injection. Test toroidal wrapping.
 
-4. **interaction.rs** — Wire up the interaction protocol. Test with known expression pairs and verify results match hand-computed reductions.
+4. **interaction.zig** — Wire up the interaction protocol. Test with known expression pairs and verify results match hand-computed reductions.
 
-5. **simulation.rs + config.rs** — The main loop. Run headless with text logging. Verify population doesn't immediately crash to zero or explode to fill every cell.
+5. **simulation.zig + config.zig** — The main loop. Run headless with text logging. Verify population doesn't immediately crash to zero or explode to fill every cell.
 
-6. **metrics.rs** — Add proper logging. Run for 10,000+ ticks and examine metrics.
+6. **metrics.zig** — Add proper logging. Run for 10,000+ ticks and examine metrics.
 
 7. **Tuning** — Adjust energy parameters until the system shows dynamic equilibrium (population fluctuating, not monotonically dying or growing).
 
