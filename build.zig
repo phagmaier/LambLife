@@ -34,4 +34,15 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
+
+    // Also test reduce.zig (and any file it imports)
+    const reduce_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/reduce.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_reduce_tests = b.addRunArtifact(reduce_tests);
+    test_step.dependOn(&run_reduce_tests.step);
 }
