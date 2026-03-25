@@ -1,5 +1,14 @@
 const std = @import("std");
 
+//Did not check for memory leak when going through all the reduction steps
+//I wrote it quickly and it was sloppy so i'm pretty sure it's either wrong
+//or has a massive memory leak or at the very least a memory problem
+//Even if it doesn't it's innefficient as shit and don't know how to fix that
+//I guess I could give each expr it's own arena but that would have it's own problems
+//this is just bad code I'm pretty sure
+
+const Error = error{CycleDetected} || std.mem.Allocator.Error;
+
 pub const Expr = union(enum) {
     Var: u32,
     Lam: *Expr,
@@ -67,8 +76,6 @@ pub const Expr = union(enum) {
         try self.hashInto(&hasher, null);
         return hasher.final();
     }
-
-    const Error = error{CycleDetected} || std.mem.Allocator.Error;
 
     const Visit = struct {
         expr: *const Expr,
