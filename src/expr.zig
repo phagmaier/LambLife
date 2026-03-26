@@ -188,6 +188,35 @@ pub const Expr = union(enum) {
             },
         }
     }
+
+    pub fn initRandom(max_depth: u32, current_depth: u32, binding_depth: u32, allocator: std.mem.Allocator, rng: std.Random) std.mem.Allocator.Error!*Expr {
+        const node = try allocator.create(Expr);
+        errdefer allocator.destroy(node);
+
+        if (current_depth >= max_depth) {
+            if (binding_depth > 0) {
+                node.* = initVar(rng.intRangeAtMost(u32, 0, binding_depth - 1));
+            } else {
+                const body = try initRandom(max_depth, current_depth + 1, 1, allocator, rng);
+                node.* = initLam(body);
+            }
+            return node;
+        }
+
+        const choice = rng.float(f32);
+        if (choice < 0.3 and binding_depth > 0) {
+            node.* = initVar(rng.intRangeAtMost(u32, 0, binding_depth - 1));
+        } else if (choice < 0.6) {
+            const body = try initRandom(max_depth, current_depth + 1, binding_depth + 1, allocator, rng);
+            node.* = initLam(body);
+        } else {
+            const func = try initRandom(max_depth, current_depth + 1, binding_depth, allocator, rng);
+            errdefer func.deinit(allocator);
+            const arg = try initRandom(max_depth, current_depth + 1, binding_depth, allocator, rng);
+            node.* = initArg(func, arg);
+        }
+        return node;
+    }
 };
 
 test "size counts every node" {
@@ -240,4 +269,32 @@ test "cyclic expressions are rejected by checked operations" {
     try std.testing.expectError(error.CycleDetected, expr.sizeChecked());
     try std.testing.expectError(error.CycleDetected, expr.hashChecked());
     try std.testing.expectError(error.CycleDetected, expr.deepCopyChecked(allocator));
+}
+
+test "initRandom produces valid acyclic expressions" {
+    const allocator = std.testing.allocator;
+    var rng = std.Random.DefaultPrng.init(42);
+
+    for (0..100) |_| {
+        const expr = try Expr.initRandom(5, 0, 0, allocator, rng.random());
+        defer expr.deinit(allocator);
+
+        try std.testing.expect(expr.isValid());
+        try std.testing.expect(expr.isAcyclic());
+        try std.testing.expect(expr.size() >= 1);
+    }
+}
+
+test "initRandom respects max_depth" {
+    const allocator = std.testing.allocator;
+    var rng = std.Random.DefaultPrng.init(99);
+
+    for (0..50) |_| {
+        const expr = try Expr.initRandom(2, 0, 0, allocator, rng.random());
+        defer expr.deinit(allocator);
+
+        try std.testing.expect(expr.isValid());
+        // depth 2 means at most ~7 nodes (binary tree of depth 2)
+        try std.testing.expect(expr.size() <= 15);
+    }
 }

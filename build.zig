@@ -45,4 +45,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_reduce_tests = b.addRunArtifact(reduce_tests);
     test_step.dependOn(&run_reduce_tests.step);
+
+    // Also test grid.zig
+    const grid_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/grid.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_grid_tests = b.addRunArtifact(grid_tests);
+    test_step.dependOn(&run_grid_tests.step);
 }
