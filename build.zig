@@ -56,4 +56,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_grid_tests = b.addRunArtifact(grid_tests);
     test_step.dependOn(&run_grid_tests.step);
+
+    // Also test mutation.zig
+    const mutation_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mutation.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_mutation_tests = b.addRunArtifact(mutation_tests);
+    test_step.dependOn(&run_mutation_tests.step);
 }
