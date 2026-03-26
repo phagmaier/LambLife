@@ -67,4 +67,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_mutation_tests = b.addRunArtifact(mutation_tests);
     test_step.dependOn(&run_mutation_tests.step);
+
+    // Also test interaction.zig
+    const interaction_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/interaction.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_interaction_tests = b.addRunArtifact(interaction_tests);
+    test_step.dependOn(&run_interaction_tests.step);
 }

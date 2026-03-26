@@ -1,0 +1,21 @@
+1. src/grid.zig — Made nextLineageId public (1-line change)
+
+  2. src/interaction.zig — New file (~420 lines) implementing plan.md §7-§8:
+
+  - processTick(grid) — Main entry point. Collects organism indices, shuffles for random order, processes each organism.
+  - processOrganism — Per-organism logic: maintenance costs, neighbor selection, builds App(A,B) and App(B,A), reduces both,
+  applies energy costs, handles outputs.
+  - handleOutput — Output handler: discards bare vars/oversized results, awards simplification bonus, detects self-similarity for
+   reproduction, places novel organisms.
+  - tryReproduce — Creates mutated child with 50% parent energy, correct lineage tracking.
+  - tryPlaceNovel — Places novel expressions as new organisms with 15.0 energy.
+  - computeSimilarity — Fast top-3-level hash reject + full structural comparison via shared node counting.
+  - Neighbor helpers — findOccupiedNeighbor, findEmptyNeighbor with toroidal wrapping via Grid.
+
+  3. build.zig — Added interaction.zig test target.
+
+  10 tests covering: similarity detection, hash consistency, neighbor finding, maintenance costs, resource interaction,
+  reproduction with lineage, and bare-var discard.
+
+  Next step per the plan would be simulation.zig + config.zig — wiring up the main tick loop (inject resources → decay →
+  processTick → death sweep → age increment → logging).

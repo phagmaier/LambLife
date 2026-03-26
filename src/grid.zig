@@ -262,7 +262,7 @@ pub const Grid = struct {
         }
     }
 
-    fn nextLineageId(self: *Grid) u64 {
+    pub fn nextLineageId(self: *Grid) u64 {
         const id = self.next_lineage_id;
         self.next_lineage_id += 1;
         return id;
