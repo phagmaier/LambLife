@@ -325,8 +325,8 @@ pub const Grid = struct {
         const h: i32 = @intCast(height);
         const offsets = [8][2]i2{
             .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
-            .{ -1, 0 },              .{ 1, 0 },
-            .{ -1, 1 },  .{ 0, 1 },  .{ 1, 1 },
+            .{ -1, 0 },  .{ 1, 0 },  .{ -1, 1 },
+            .{ 0, 1 },   .{ 1, 1 },
         };
         var result: [8]u32 = undefined;
         for (offsets, 0..) |off, i| {

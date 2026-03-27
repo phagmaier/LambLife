@@ -4,6 +4,7 @@ const Grid = grid_mod.Grid;
 const interaction = @import("interaction.zig");
 const TickStats = interaction.TickStats;
 const Config = @import("config.zig").Config;
+const metrics = @import("metrics.zig");
 
 pub const StepResult = struct {
     tick_stats: TickStats,
@@ -12,22 +13,31 @@ pub const StepResult = struct {
 };
 
 pub const Simulation = struct {
+    prng: std.Random.DefaultPrng,
     grid: Grid,
     tick: u64,
     config: Config,
     allocator: std.mem.Allocator,
+    metric_logger: metrics.MetricLogger,
+    lineage_log: metrics.LineageLog,
 
-    pub fn init(allocator: std.mem.Allocator, config: Config, seed: u64) !Simulation {
-        var prng = std.Random.DefaultPrng.init(seed);
-        return .{
-            .grid = try Grid.init(allocator, prng.random(), seed, config),
+    pub fn init(allocator: std.mem.Allocator, config: Config, seed: u64, csv_path: ?[]const u8) !Simulation {
+        var sim = Simulation{
+            .prng = std.Random.DefaultPrng.init(seed),
+            .grid = undefined,
             .tick = 0,
             .config = config,
             .allocator = allocator,
+            .metric_logger = try metrics.MetricLogger.init(csv_path),
+            .lineage_log = metrics.LineageLog.init(allocator),
         };
+        sim.grid = try Grid.init(allocator, sim.prng.random(), seed, config);
+        return sim;
     }
 
     pub fn deinit(self: *Simulation) void {
+        self.lineage_log.deinit();
+        self.metric_logger.deinit();
         self.grid.deinit();
     }
 
@@ -82,44 +92,47 @@ pub const Simulation = struct {
         };
     }
 
-    /// Run multiple ticks, printing stats at each log interval.
+    /// Run multiple ticks with full metric collection and logging.
     pub fn run(self: *Simulation, num_ticks: u64) !void {
+        const diversity_interval: u64 = 1000;
+
         for (0..num_ticks) |_| {
             const result = try self.step();
 
+            // Record lineage for births that happened this tick
+            // (scan for organisms born this tick = age 0 with a parent)
+            for (self.grid.cells) |cell| {
+                switch (cell) {
+                    .organism => |org| {
+                        if (org.age == 0 and org.parent_lineage != null) {
+                            try self.lineage_log.record(
+                                self.tick,
+                                org.lineage_id,
+                                org.parent_lineage.?,
+                                org.generation,
+                                org.expr.hash(),
+                            );
+                        }
+                    },
+                    else => {},
+                }
+            }
+
             if (self.tick % self.config.log_interval == 0) {
-                const counts = self.grid.countCells();
-                const mean_energy = self.computeMeanEnergy();
+                var m = metrics.collectTickMetrics(&self.grid, self.tick, result.tick_stats, result.deaths_energy, result.deaths_age);
 
-                std.debug.print("tick={d} pop={d} res={d} empty={d} births={d} deaths_e={d} deaths_a={d} interactions={d} mean_energy={d:.1}\n", .{
-                    self.tick,
-                    counts.organisms,
-                    counts.resources,
-                    counts.empty,
-                    result.tick_stats.births,
-                    result.deaths_energy,
-                    result.deaths_age,
-                    result.tick_stats.interactions,
-                    mean_energy,
-                });
+                // Attach unique structure count from diversity if at diversity interval
+                if (self.tick % diversity_interval == 0) {
+                    var report = try metrics.collectDiversity(&self.grid, self.allocator);
+                    defer report.deinit();
+                    m.unique_structures = report.unique_count;
+                    metrics.printDiversityReport(report, self.tick);
+                }
+
+                metrics.printTickMetrics(m);
+                try self.metric_logger.log(m);
             }
         }
-    }
-
-    fn computeMeanEnergy(self: *const Simulation) f64 {
-        var total: f64 = 0;
-        var count: u32 = 0;
-        for (self.grid.cells) |cell| {
-            switch (cell) {
-                .organism => |org| {
-                    total += org.energy;
-                    count += 1;
-                },
-                else => {},
-            }
-        }
-        if (count == 0) return 0;
-        return total / @as(f64, @floatFromInt(count));
     }
 };
 
@@ -131,7 +144,7 @@ test "simulation runs one step without crashing" {
     const allocator = std.testing.allocator;
     const config = Config{ .width = 10, .height = 10 };
 
-    var sim = try Simulation.init(allocator, config, 42);
+    var sim = try Simulation.init(allocator, config, 42, null);
     defer sim.deinit();
 
     const result = try sim.step();
@@ -145,7 +158,7 @@ test "simulation death sweep removes zero-energy organisms" {
     // Use a tiny grid with no resources so interactions can't create new organisms
     const config = Config{ .width = 10, .height = 10, .initial_resource_fraction = 0, .resource_injection_rate = 0 };
 
-    var sim = try Simulation.init(allocator, config, 42);
+    var sim = try Simulation.init(allocator, config, 42, null);
     defer sim.deinit();
 
     // Set all organisms to very negative energy so even offspring die
@@ -164,7 +177,7 @@ test "simulation age death removes old organisms" {
     const allocator = std.testing.allocator;
     const config = Config{ .width = 10, .height = 10, .max_organism_age = 5 };
 
-    var sim = try Simulation.init(allocator, config, 42);
+    var sim = try Simulation.init(allocator, config, 42, null);
     defer sim.deinit();
 
     // Set all organisms to max age and high energy so they don't die from energy

@@ -89,4 +89,15 @@ pub fn build(b: *std.Build) void {
     });
     const run_simulation_tests = b.addRunArtifact(simulation_tests);
     test_step.dependOn(&run_simulation_tests.step);
+
+    // Also test metrics.zig
+    const metrics_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/metrics.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_metrics_tests = b.addRunArtifact(metrics_tests);
+    test_step.dependOn(&run_metrics_tests.step);
 }

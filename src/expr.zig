@@ -1,12 +1,5 @@
 const std = @import("std");
 
-//Did not check for memory leak when going through all the reduction steps
-//I wrote it quickly and it was sloppy so i'm pretty sure it's either wrong
-//or has a massive memory leak or at the very least a memory problem
-//Even if it doesn't it's innefficient as shit and don't know how to fix that
-//I guess I could give each expr it's own arena but that would have it's own problems
-//this is just bad code I'm pretty sure
-
 const Error = error{CycleDetected} || std.mem.Allocator.Error;
 
 pub const Expr = union(enum) {
@@ -16,8 +9,6 @@ pub const Expr = union(enum) {
         func: *Expr,
         arg: *Expr,
     },
-    //Might want to change all of these to expect a allocator and dynamically crate but this is fine
-    //for now and still workable in either solution just means have to allocate elsewhere
     pub fn initVar(v: u32) Expr {
         return .{ .Var = v };
     }
