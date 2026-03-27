@@ -1,6 +1,7 @@
 const std = @import("std");
 const Expr = @import("expr.zig").Expr;
 const Config = @import("config.zig").Config;
+const mutation = @import("mutation.zig");
 
 pub const ResourceKind = enum(u3) {
     identity,
@@ -242,9 +243,25 @@ pub const Grid = struct {
 
         const num_organisms: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * self.config.initial_organism_fraction);
         const num_resources: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * self.config.initial_resource_fraction);
+        const num_replicators = @min(self.config.seed_replicator_count, num_organisms);
 
-        // Place organisms
-        for (indices[0..num_organisms]) |idx| {
+        // Place seed replicators first (within the organism slots)
+        for (indices[0..num_replicators]) |idx| {
+            const expr = try buildSeedReplicator(self.allocator, self.rng);
+            // Apply a slight mutation to each seeded replicator for diversity
+            try mutation.mutate(expr, self.allocator, self.rng, self.config);
+            self.cells[idx] = .{ .organism = .{
+                .expr = expr,
+                .energy = self.config.initial_organism_energy,
+                .age = 0,
+                .lineage_id = self.nextLineageId(),
+                .parent_lineage = null,
+                .generation = 0,
+            } };
+        }
+
+        // Place remaining random organisms
+        for (indices[num_replicators..num_organisms]) |idx| {
             const depth = self.rng.intRangeAtMost(u32, self.config.initial_expr_min_depth, self.config.initial_expr_max_depth);
             const expr = try Expr.initRandom(depth, 0, 0, self.allocator, self.rng);
             self.cells[idx] = .{ .organism = .{
@@ -265,6 +282,55 @@ pub const Grid = struct {
                 .age = 0,
             } };
         }
+    }
+
+    /// Build a known self-replicator expression. Randomly picks from:
+    /// - Omega/Mockingbird: Lam(App(Var(0), Var(0)))
+    /// - Guarded Replicator: Lam(Lam(App(Var(1), App(Var(1), Var(0)))))
+    fn buildSeedReplicator(allocator: std.mem.Allocator, rng: std.Random) !*Expr {
+        const choice = rng.intRangeLessThan(u32, 0, 3);
+        return switch (choice) {
+            // Omega: Lam(App(Var(0), Var(0)))
+            0, 1 => {
+                const v0a = try allocator.create(Expr);
+                v0a.* = Expr.initVar(0);
+                errdefer v0a.deinit(allocator);
+                const v0b = try allocator.create(Expr);
+                v0b.* = Expr.initVar(0);
+                errdefer v0b.deinit(allocator);
+                const app = try allocator.create(Expr);
+                app.* = Expr.initArg(v0a, v0b);
+                errdefer app.deinit(allocator);
+                const lam = try allocator.create(Expr);
+                lam.* = Expr.initLam(app);
+                return lam;
+            },
+            // Guarded Replicator: Lam(Lam(App(Var(1), App(Var(1), Var(0)))))
+            2 => {
+                const v0 = try allocator.create(Expr);
+                v0.* = Expr.initVar(0);
+                errdefer v0.deinit(allocator);
+                const v1a = try allocator.create(Expr);
+                v1a.* = Expr.initVar(1);
+                errdefer v1a.deinit(allocator);
+                const v1b = try allocator.create(Expr);
+                v1b.* = Expr.initVar(1);
+                errdefer v1b.deinit(allocator);
+                const inner_app = try allocator.create(Expr);
+                inner_app.* = Expr.initArg(v1b, v0);
+                errdefer inner_app.deinit(allocator);
+                const outer_app = try allocator.create(Expr);
+                outer_app.* = Expr.initArg(v1a, inner_app);
+                errdefer outer_app.deinit(allocator);
+                const inner_lam = try allocator.create(Expr);
+                inner_lam.* = Expr.initLam(outer_app);
+                errdefer inner_lam.deinit(allocator);
+                const outer_lam = try allocator.create(Expr);
+                outer_lam.* = Expr.initLam(inner_lam);
+                return outer_lam;
+            },
+            else => unreachable,
+        };
     }
 
     pub fn nextLineageId(self: *Grid) u64 {

@@ -40,6 +40,7 @@ pub const Config = struct {
     max_organism_age: u64 = 10_000,
     initial_expr_min_depth: u32 = 3,
     initial_expr_max_depth: u32 = 5,
+    seed_replicator_count: u32 = 75,
 
     // Similarity
     similarity_threshold: f64 = 0.80,
