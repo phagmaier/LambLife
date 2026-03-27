@@ -5,29 +5,7 @@ const Grid = grid_mod.Grid;
 const ResourceKind = grid_mod.ResourceKind;
 const reduce_mod = @import("reduce.zig");
 const mutation = @import("mutation.zig");
-
-// ============================================================
-// Energy constants (plan.md §5, §18)
-// ============================================================
-
-const INTERACTION_BASE_COST: f64 = 2.0;
-const REDUCTION_STEP_COST: f64 = 0.3;
-const NEIGHBOR_INTERACTION_COST: f64 = 1.0;
-const MAINTENANCE_BASE: f64 = 0.5;
-const MAINTENANCE_PER_NODE: f64 = 0.1;
-const SIZE_PENALTY_THRESHOLD: u32 = 100;
-const SIZE_PENALTY_PER_NODE: f64 = 0.5;
-
-const SIMPLIFICATION_BONUS_PER_NODE: f64 = 2.0;
-const RESOURCE_CONSUMPTION_BONUS: f64 = 10.0;
-const SELF_SIMILARITY_BONUS: f64 = 5.0;
-const NOVEL_OFFSPRING_INITIAL_ENERGY: f64 = 15.0;
-const REPRODUCTION_ENERGY_FRACTION: f64 = 0.5;
-
-const MAX_REDUCTION_STEPS: u32 = 200;
-const MAX_EXPRESSION_SIZE: u32 = 500;
-const SIMILARITY_THRESHOLD: f64 = 0.80;
-const HASH_DEPTH_LIMIT: u32 = 3;
+const Config = @import("config.zig").Config;
 
 // ============================================================
 // Public types
@@ -86,9 +64,9 @@ pub fn processTick(grid: *Grid) !TickStats {
 
 /// Compute structural similarity between two expressions.
 /// Returns a value in [0.0, 1.0].
-pub fn computeSimilarity(a: *const Expr, b: *const Expr) f64 {
+pub fn computeSimilarity(a: *const Expr, b: *const Expr, hash_depth_limit: u32) f64 {
     // Fast reject: if top-level hashes differ, not similar
-    if (hashTopLevels(a, HASH_DEPTH_LIMIT) != hashTopLevels(b, HASH_DEPTH_LIMIT)) {
+    if (hashTopLevels(a, hash_depth_limit) != hashTopLevels(b, hash_depth_limit)) {
         return 0.0;
     }
     // Full structural comparison
@@ -105,6 +83,8 @@ pub fn computeSimilarity(a: *const Expr, b: *const Expr) f64 {
 // ============================================================
 
 fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
+    const config = grid.config;
+
     // Guard: cell must still be an organism
     if (grid.cells[org_idx] != .organism) return;
 
@@ -112,10 +92,10 @@ fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
     {
         const s = grid.cells[org_idx].organism.expr.size();
         const sf: f64 = @floatFromInt(s);
-        grid.cells[org_idx].organism.energy -= MAINTENANCE_BASE + MAINTENANCE_PER_NODE * sf;
-        if (s > SIZE_PENALTY_THRESHOLD) {
-            const excess: f64 = @floatFromInt(s - SIZE_PENALTY_THRESHOLD);
-            grid.cells[org_idx].organism.energy -= SIZE_PENALTY_PER_NODE * excess;
+        grid.cells[org_idx].organism.energy -= config.maintenance_base + config.maintenance_per_node * sf;
+        if (s > config.size_penalty_threshold) {
+            const excess: f64 = @floatFromInt(s - config.size_penalty_threshold);
+            grid.cells[org_idx].organism.energy -= config.size_penalty_per_node * excess;
         }
     }
 
@@ -146,7 +126,7 @@ fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
     app_ab.* = Expr.initArg(org_expr_1, neighbor_copy_1);
     defer app_ab.deinit(grid.allocator);
 
-    const result_ab = try reduce_mod.reduce(app_ab, MAX_REDUCTION_STEPS, MAX_EXPRESSION_SIZE, grid.allocator);
+    const result_ab = try reduce_mod.reduce(app_ab, config.max_reduction_steps, config.max_expression_size, grid.allocator);
     defer result_ab.expr.deinit(grid.allocator);
 
     // Deep-copy organism expression for building App(B, A)
@@ -162,17 +142,17 @@ fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
     app_ba.* = Expr.initArg(neighbor_copy_2, org_expr_2);
     defer app_ba.deinit(grid.allocator);
 
-    const result_ba = try reduce_mod.reduce(app_ba, MAX_REDUCTION_STEPS, MAX_EXPRESSION_SIZE, grid.allocator);
+    const result_ba = try reduce_mod.reduce(app_ba, config.max_reduction_steps, config.max_expression_size, grid.allocator);
     defer result_ba.expr.deinit(grid.allocator);
 
     // Deduct interaction and reduction costs from organism A
-    grid.cells[org_idx].organism.energy -= INTERACTION_BASE_COST;
+    grid.cells[org_idx].organism.energy -= config.interaction_base_cost;
     const total_steps: f64 = @floatFromInt(result_ab.steps + result_ba.steps);
-    grid.cells[org_idx].organism.energy -= REDUCTION_STEP_COST * total_steps;
+    grid.cells[org_idx].organism.energy -= config.reduction_step_cost * total_steps;
 
     // Charge neighbor B if it's an organism
     if (neighbor.is_organism and grid.cells[neighbor.index] == .organism) {
-        grid.cells[neighbor.index].organism.energy -= NEIGHBOR_INTERACTION_COST;
+        grid.cells[neighbor.index].organism.energy -= config.neighbor_interaction_cost;
     }
 
     // Handle outputs
@@ -224,12 +204,14 @@ fn handleOutput(
     resource_consumed: *bool,
     stats: *TickStats,
 ) void {
+    const config = grid.config;
+
     // Guard: organism might have been overwritten
     if (grid.cells[org_idx] != .organism) return;
 
     // 1. Discard if too large or bare variable
     const result_size = result.size();
-    if (result_size > MAX_EXPRESSION_SIZE) return;
+    if (result_size > config.max_expression_size) return;
     if (result.* == .Var) return;
 
     // 2. Simplification bonus
@@ -238,13 +220,13 @@ fn handleOutput(
     const input_total: u32 = org_size + neighbor_size;
     if (result_size < input_total) {
         const reduction: f64 = @floatFromInt(input_total - result_size);
-        grid.cells[org_idx].organism.energy += SIMPLIFICATION_BONUS_PER_NODE * reduction;
+        grid.cells[org_idx].organism.energy += config.simplification_bonus_per_node * reduction;
     }
 
     // 3. Self-similarity check
-    const sim_to_parent = computeSimilarity(result, org_expr);
-    if (sim_to_parent >= SIMILARITY_THRESHOLD) {
-        grid.cells[org_idx].organism.energy += SELF_SIMILARITY_BONUS;
+    const sim_to_parent = computeSimilarity(result, org_expr, config.hash_depth_limit);
+    if (sim_to_parent >= config.similarity_threshold) {
+        grid.cells[org_idx].organism.energy += config.self_similarity_bonus;
         if (!already_reproduced.*) {
             if (tryReproduce(grid, org_idx, result, stats)) {
                 already_reproduced.* = true;
@@ -252,8 +234,8 @@ fn handleOutput(
         }
     } else {
         // 4. Novel output — check not similar to either input
-        const sim_to_neighbor = computeSimilarity(result, neighbor_expr);
-        if (sim_to_neighbor < SIMILARITY_THRESHOLD) {
+        const sim_to_neighbor = computeSimilarity(result, neighbor_expr, config.hash_depth_limit);
+        if (sim_to_neighbor < config.similarity_threshold) {
             tryPlaceNovel(grid, org_idx, result, stats);
         }
     }
@@ -264,7 +246,7 @@ fn handleOutput(
         const resource_hash = neighbor_expr.hash();
         if (result_hash != resource_hash) {
             grid.cells[neighbor_idx] = .empty;
-            grid.cells[org_idx].organism.energy += RESOURCE_CONSUMPTION_BONUS;
+            grid.cells[org_idx].organism.energy += config.resource_consumption_bonus;
             resource_consumed.* = true;
             stats.resources_consumed += 1;
         }
@@ -276,20 +258,21 @@ fn handleOutput(
 // ============================================================
 
 fn tryReproduce(grid: *Grid, parent_idx: u32, child_expr: *const Expr, stats: *TickStats) bool {
+    const config = grid.config;
     if (grid.cells[parent_idx] != .organism) return false;
 
     const empty_idx = findEmptyNeighbor(grid, parent_idx) orelse return false;
 
     // Deep-copy and mutate
     const child_copy = Expr.deepCopy(child_expr, grid.allocator) catch return false;
-    mutation.mutate(child_copy, grid.allocator, grid.rng) catch {
+    mutation.mutate(child_copy, grid.allocator, grid.rng, config) catch {
         child_copy.deinit(grid.allocator);
         return false;
     };
 
     // Transfer energy
     const parent_energy = grid.cells[parent_idx].organism.energy;
-    const child_energy = parent_energy * REPRODUCTION_ENERGY_FRACTION;
+    const child_energy = parent_energy * config.reproduction_energy_fraction;
     grid.cells[parent_idx].organism.energy -= child_energy;
 
     // Place child
@@ -312,7 +295,7 @@ fn tryPlaceNovel(grid: *Grid, near_idx: u32, result_expr: *const Expr, stats: *T
 
     grid.cells[empty_idx] = .{ .organism = .{
         .expr = copy,
-        .energy = NOVEL_OFFSPRING_INITIAL_ENERGY,
+        .energy = grid.config.novel_offspring_initial_energy,
         .age = 0,
         .lineage_id = grid.nextLineageId(),
         .parent_lineage = null,
@@ -326,7 +309,7 @@ fn tryPlaceNovel(grid: *Grid, near_idx: u32, result_expr: *const Expr, stats: *T
 // ============================================================
 
 fn findOccupiedNeighbor(grid: *Grid, idx: u32) ?NeighborInfo {
-    const neighbors = Grid.getNeighborIndices(idx);
+    const neighbors = grid.getNeighborIndices(idx);
     var occupied: [8]NeighborInfo = undefined;
     var count: u32 = 0;
 
@@ -350,7 +333,7 @@ fn findOccupiedNeighbor(grid: *Grid, idx: u32) ?NeighborInfo {
 }
 
 fn findEmptyNeighbor(grid: *Grid, idx: u32) ?u32 {
-    const neighbors = Grid.getNeighborIndices(idx);
+    const neighbors = grid.getNeighborIndices(idx);
     var empty: [8]u32 = undefined;
     var count: u32 = 0;
 
@@ -436,6 +419,8 @@ fn makeApp(allocator: std.mem.Allocator, func: *Expr, arg: *Expr) !*Expr {
     return e;
 }
 
+const DEFAULT_HASH_DEPTH: u32 = 3;
+
 test "computeSimilarity — identical expressions return 1.0" {
     const allocator = std.testing.allocator;
 
@@ -446,7 +431,7 @@ test "computeSimilarity — identical expressions return 1.0" {
     const expr = try makeLam(allocator, app);
     defer expr.deinit(allocator);
 
-    const sim = computeSimilarity(expr, expr);
+    const sim = computeSimilarity(expr, expr, DEFAULT_HASH_DEPTH);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), sim, 0.001);
 }
 
@@ -467,7 +452,7 @@ test "computeSimilarity — completely different expressions return 0.0" {
     const b = try makeApp(allocator, outer, arg);
     defer b.deinit(allocator);
 
-    const sim = computeSimilarity(a, b);
+    const sim = computeSimilarity(a, b, DEFAULT_HASH_DEPTH);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), sim, 0.001);
 }
 
@@ -525,12 +510,13 @@ test "hashTopLevels — different expressions have different hashes" {
 test "findOccupiedNeighbor — returns null when all neighbors empty" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = Config{ .width = 20, .height = 20 };
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     // Clear all cells around index 0
-    const neighbors = Grid.getNeighborIndices(0);
+    const neighbors = grid.getNeighborIndices(0);
     for (neighbors) |n| {
         switch (grid.cells[n]) {
             .organism => |*org| org.expr.deinit(allocator),
@@ -545,12 +531,13 @@ test "findOccupiedNeighbor — returns null when all neighbors empty" {
 test "findEmptyNeighbor — finds empty cell" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = Config{ .width = 20, .height = 20 };
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     // Ensure at least one neighbor of cell 0 is empty
-    const neighbors = Grid.getNeighborIndices(0);
+    const neighbors = grid.getNeighborIndices(0);
     var has_empty = false;
     for (neighbors) |n| {
         if (grid.cells[n] == .empty) {
@@ -573,8 +560,9 @@ test "findEmptyNeighbor — finds empty cell" {
 test "processOrganism — maintenance cost deducted" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = Config{ .width = 20, .height = 20 };
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     // Find an organism and clear its neighbors so it does nothing but pay maintenance
@@ -585,7 +573,7 @@ test "processOrganism — maintenance cost deducted" {
             break;
         }
     }
-    const neighbors = Grid.getNeighborIndices(org_idx);
+    const neighbors = grid.getNeighborIndices(org_idx);
     for (neighbors) |n| {
         switch (grid.cells[n]) {
             .organism => |*org| org.expr.deinit(allocator),
@@ -606,8 +594,9 @@ test "processOrganism — maintenance cost deducted" {
 test "processOrganism — interaction with resource deducts costs" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = Config{ .width = 20, .height = 20 };
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     // Find an organism
@@ -620,7 +609,7 @@ test "processOrganism — interaction with resource deducts costs" {
     }
 
     // Clear neighbors and place exactly one resource
-    const neighbors = Grid.getNeighborIndices(org_idx);
+    const neighbors = grid.getNeighborIndices(org_idx);
     for (neighbors) |n| {
         switch (grid.cells[n]) {
             .organism => |*org| org.expr.deinit(allocator),
@@ -636,8 +625,7 @@ test "processOrganism — interaction with resource deducts costs" {
     var stats = TickStats{};
     try processOrganism(&grid, org_idx, &stats);
 
-    // Should have interacted (bonuses may outweigh costs, so just check interaction happened
-    // and energy changed)
+    // Should have interacted
     try std.testing.expectEqual(@as(u32, 1), stats.interactions);
     try std.testing.expect(grid.cells[org_idx].organism.energy != energy_before);
 }
@@ -645,20 +633,19 @@ test "processOrganism — interaction with resource deducts costs" {
 test "tryReproduce — child gets correct lineage and energy" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = Config{ .width = 20, .height = 20 };
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     // Find an organism with at least one empty neighbor
     var org_idx: ?u32 = null;
-    var empty_neighbor: ?u32 = null;
     for (grid.cells, 0..) |cell, i| {
         if (cell == .organism) {
-            const nbrs = Grid.getNeighborIndices(@intCast(i));
+            const nbrs = grid.getNeighborIndices(@intCast(i));
             for (nbrs) |n| {
                 if (grid.cells[n] == .empty) {
                     org_idx = @intCast(i);
-                    empty_neighbor = n;
                     break;
                 }
             }
@@ -678,11 +665,11 @@ test "tryReproduce — child gets correct lineage and energy" {
         if (success) {
             try std.testing.expectEqual(@as(u32, 1), stats.births);
             // Parent lost energy
-            const expected_parent_energy = parent_energy - parent_energy * REPRODUCTION_ENERGY_FRACTION;
+            const expected_parent_energy = parent_energy - parent_energy * config.reproduction_energy_fraction;
             try std.testing.expectApproxEqAbs(expected_parent_energy, grid.cells[oi].organism.energy, 0.01);
 
             // Find the child (scan neighbors for new organism)
-            const nbrs = Grid.getNeighborIndices(oi);
+            const nbrs = grid.getNeighborIndices(oi);
             for (nbrs) |n| {
                 if (grid.cells[n] == .organism and grid.cells[n].organism.parent_lineage != null) {
                     if (grid.cells[n].organism.parent_lineage.? == parent_lineage) {
@@ -698,8 +685,9 @@ test "tryReproduce — child gets correct lineage and energy" {
 test "bare Var result is discarded by handleOutput" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = Config{ .width = 20, .height = 20 };
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     // Find an organism

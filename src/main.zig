@@ -1,25 +1,32 @@
 const std = @import("std");
-const builtin = @import("builtin");
-const Expr = @import("expr.zig").Expr;
+const Config = @import("config.zig").Config;
+const Simulation = @import("simulation.zig").Simulation;
 
 pub fn main() !void {
-    var da = std.heap.DebugAllocator(.{}){};
-    const allocator = if (builtin.mode == .Debug) da.allocator() else std.heap.smp_allocator;
-    defer _ = da.deinit();
-    const body = try allocator.create(Expr);
-    body.* = Expr.initVar(0);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    const lambda = try allocator.create(Expr);
-    lambda.* = Expr.initLam(body);
-    defer lambda.deinit(allocator);
+    const config = Config{};
+    const seed: u64 = @intCast(std.time.timestamp());
 
-    const size = try lambda.sizeChecked();
-    const hash = try lambda.hashChecked();
+    std.debug.print("LambLife starting: {d}x{d} grid, seed={d}\n", .{ config.width, config.height, seed });
 
-    std.debug.print("size={d} hash={d} valid={} acyclic={}\n", .{
-        size,
-        hash,
-        lambda.isValid(),
-        lambda.isAcyclic(),
-    });
+    var sim = try Simulation.init(allocator, config, seed);
+    defer sim.deinit();
+
+    try sim.run(10_000);
+
+    std.debug.print("Simulation complete.\n", .{});
+}
+
+// Pull in tests from all modules
+test {
+    _ = @import("expr.zig");
+    _ = @import("reduce.zig");
+    _ = @import("mutation.zig");
+    _ = @import("grid.zig");
+    _ = @import("interaction.zig");
+    _ = @import("simulation.zig");
+    _ = @import("config.zig");
 }

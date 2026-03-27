@@ -1,7 +1,6 @@
 const std = @import("std");
 const Expr = @import("expr.zig").Expr;
-
-const SUBTREE_REPLACE_MAX_DEPTH: u32 = 3;
+const Config = @import("config.zig").Config;
 
 const NodeInfo = struct {
     node: *Expr,
@@ -10,21 +9,21 @@ const NodeInfo = struct {
 
 /// Apply 1-3 random mutation operators to expr (in-place).
 /// Ensures the result is always a valid expression.
-pub fn mutate(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random) !void {
-    const num = rng.intRangeAtMost(u32, 1, 3);
+pub fn mutate(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random, config: Config) !void {
+    const num = rng.intRangeAtMost(u32, config.mutations_min, config.mutations_max);
     for (0..num) |_| {
-        try mutateOnce(expr, allocator, rng);
+        try mutateOnce(expr, allocator, rng, config);
     }
 }
 
-fn mutateOnce(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random) !void {
+fn mutateOnce(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random, config: Config) !void {
     const roll = rng.intRangeLessThan(u32, 0, 100);
     if (roll < 25) {
         changeVarIndex(expr, rng);
     } else if (roll < 40) {
         try changeNodeType(expr, allocator, rng);
     } else if (roll < 55) {
-        try subtreeReplace(expr, allocator, rng);
+        try subtreeReplace(expr, allocator, rng, config);
     } else if (roll < 70) {
         try lambdaWrap(expr, allocator, rng);
     } else if (roll < 80) {
@@ -86,14 +85,14 @@ fn changeNodeType(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random) !v
 }
 
 /// Replace a random subtree with a freshly generated expression of depth 1-3.
-fn subtreeReplace(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random) !void {
+fn subtreeReplace(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random, config: Config) !void {
     const node_count = expr.size();
     var target = rng.intRangeLessThan(u32, 0, node_count);
     const info = findNthNode(expr, &target, 0) orelse return;
     const node = info.node;
 
     freeChildren(node, allocator);
-    const depth = rng.intRangeAtMost(u32, 1, SUBTREE_REPLACE_MAX_DEPTH);
+    const depth = rng.intRangeAtMost(u32, 1, config.random_expr_max_depth);
     const new_expr = try Expr.initRandom(depth, 0, info.binding_depth, allocator, rng);
     node.* = new_expr.*;
     allocator.destroy(new_expr);
@@ -146,8 +145,6 @@ fn subtreeDup(expr: *Expr, allocator: std.mem.Allocator, rng: std.Random) !void 
 
     // Pick a different target
     var dst_idx = rng.intRangeLessThan(u32, 0, node_count - 1);
-    // Recompute src_idx for comparison (need original value)
-    // Simpler: just pick any target; if same node, the mutation is a no-op structurally
     const dst_info = findNthNode(expr, &dst_idx, 0) orelse {
         copy.deinit(allocator);
         return;
@@ -264,6 +261,8 @@ fn clampIndices(node: *Expr, depth: u32, allocator: std.mem.Allocator) !void {
 // Tests
 // ============================================================
 
+const DEFAULT_CONFIG = Config{};
+
 test "mutate always produces valid expressions" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
@@ -273,7 +272,7 @@ test "mutate always produces valid expressions" {
         const expr = try Expr.initRandom(5, 0, 0, allocator, rng);
         defer expr.deinit(allocator);
 
-        try mutate(expr, allocator, rng);
+        try mutate(expr, allocator, rng, DEFAULT_CONFIG);
 
         try std.testing.expect(expr.isValid());
         try std.testing.expect(expr.isAcyclic());
@@ -292,7 +291,7 @@ test "mutate changes at least some expressions" {
         const expr = try Expr.initRandom(4, 0, 0, allocator, rng);
         const original_hash = expr.hash();
 
-        try mutate(expr, allocator, rng);
+        try mutate(expr, allocator, rng, DEFAULT_CONFIG);
         const new_hash = expr.hash();
 
         if (original_hash != new_hash) changed += 1;

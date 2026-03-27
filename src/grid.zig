@@ -1,18 +1,6 @@
 const std = @import("std");
 const Expr = @import("expr.zig").Expr;
-
-pub const WIDTH: u32 = 150;
-pub const HEIGHT: u32 = 150;
-const GRID_SIZE: u32 = WIDTH * HEIGHT;
-
-const NUM_BIOMES: u32 = 5;
-const RESOURCE_MAX_AGE: u16 = 50;
-const INITIAL_ORGANISM_FRACTION: f32 = 0.25;
-const INITIAL_RESOURCE_FRACTION: f32 = 0.10;
-const INITIAL_ORGANISM_ENERGY: f64 = 100.0;
-const INITIAL_EXPR_MIN_DEPTH: u32 = 3;
-const INITIAL_EXPR_MAX_DEPTH: u32 = 5;
-const RESOURCE_INJECTION_RATE: f32 = 0.005;
+const Config = @import("config.zig").Config;
 
 pub const ResourceKind = enum(u3) {
     identity,
@@ -48,24 +36,32 @@ pub const Cell = union(enum) {
 pub const Grid = struct {
     cells: []Cell,
     biome_map: []u8,
-    biome_distributions: [NUM_BIOMES][ResourceKind.COUNT]f32,
+    /// Flat slice of length num_biomes * ResourceKind.COUNT.
+    /// Index as: biome * ResourceKind.COUNT + resource_index
+    biome_distributions: []f32,
     resource_exprs: [ResourceKind.COUNT]*Expr,
     next_lineage_id: u64,
     rng: std.Random,
     allocator: std.mem.Allocator,
+    config: Config,
 
-    pub fn init(allocator: std.mem.Allocator, rng: std.Random, seed: u64) !Grid {
+    pub fn init(allocator: std.mem.Allocator, rng: std.Random, seed: u64, config: Config) !Grid {
+        const grid_size = config.gridSize();
+        const num_biomes = config.num_biomes;
+
         var grid = Grid{
-            .cells = try allocator.alloc(Cell, GRID_SIZE),
-            .biome_map = try allocator.alloc(u8, GRID_SIZE),
-            .biome_distributions = undefined,
+            .cells = try allocator.alloc(Cell, grid_size),
+            .biome_map = try allocator.alloc(u8, grid_size),
+            .biome_distributions = try allocator.alloc(f32, num_biomes * ResourceKind.COUNT),
             .resource_exprs = undefined,
             .next_lineage_id = 0,
             .rng = rng,
             .allocator = allocator,
+            .config = config,
         };
         errdefer allocator.free(grid.cells);
         errdefer allocator.free(grid.biome_map);
+        errdefer allocator.free(grid.biome_distributions);
 
         @memset(grid.cells, .empty);
 
@@ -86,6 +82,7 @@ pub const Grid = struct {
         for (&self.resource_exprs) |expr| {
             expr.deinit(self.allocator);
         }
+        self.allocator.free(self.biome_distributions);
         self.allocator.free(self.biome_map);
         self.allocator.free(self.cells);
     }
@@ -170,26 +167,31 @@ pub const Grid = struct {
     }
 
     fn generateBiomes(self: *Grid, seed: u64) void {
+        const num_biomes = self.config.num_biomes;
+        const width = self.config.width;
+        const height = self.config.height;
+        const grid_size = self.config.gridSize();
+
         var biome_rng = std.Random.DefaultPrng.init(seed);
         const rng = biome_rng.random();
 
-        // Generate random seed points for Voronoi
-        var seeds: [NUM_BIOMES][2]u32 = undefined;
-        for (&seeds) |*s| {
-            s[0] = rng.intRangeAtMost(u32, 0, WIDTH - 1);
-            s[1] = rng.intRangeAtMost(u32, 0, HEIGHT - 1);
+        // Generate random seed points for Voronoi (max 16 biomes supported)
+        var seeds: [16][2]u32 = undefined;
+        for (0..num_biomes) |i| {
+            seeds[i][0] = rng.intRangeAtMost(u32, 0, width - 1);
+            seeds[i][1] = rng.intRangeAtMost(u32, 0, height - 1);
         }
 
         // Assign each cell to nearest seed (toroidal distance)
-        for (0..GRID_SIZE) |i| {
-            const x = @as(u32, @intCast(i % WIDTH));
-            const y = @as(u32, @intCast(i / WIDTH));
+        for (0..grid_size) |i| {
+            const x = @as(u32, @intCast(i % width));
+            const y = @as(u32, @intCast(i / width));
 
             var best_biome: u8 = 0;
             var best_dist: u32 = std.math.maxInt(u32);
 
-            for (seeds, 0..) |s, bi| {
-                const dist = toroidalDistSq(x, y, s[0], s[1]);
+            for (0..num_biomes) |bi| {
+                const dist = toroidalDistSq(x, y, seeds[bi][0], seeds[bi][1], width, height);
                 if (dist < best_dist) {
                     best_dist = dist;
                     best_biome = @intCast(bi);
@@ -199,52 +201,55 @@ pub const Grid = struct {
         }
 
         // Generate distribution over resource types for each biome.
-        // Each biome gets a random "dominant" resource with 50% weight,
-        // a secondary at 30%, and the remaining 20% spread across others.
-        for (0..NUM_BIOMES) |bi| {
+        for (0..num_biomes) |bi| {
             const dominant = rng.intRangeAtMost(u32, 0, ResourceKind.COUNT - 1);
             var secondary = rng.intRangeAtMost(u32, 0, ResourceKind.COUNT - 2);
             if (secondary >= dominant) secondary += 1;
 
             const others_weight: f32 = 0.20 / @as(f32, @floatFromInt(ResourceKind.COUNT - 2));
             for (0..ResourceKind.COUNT) |ri| {
+                const idx = bi * ResourceKind.COUNT + ri;
                 if (ri == dominant) {
-                    self.biome_distributions[bi][ri] = 0.50;
+                    self.biome_distributions[idx] = 0.50;
                 } else if (ri == secondary) {
-                    self.biome_distributions[bi][ri] = 0.30;
+                    self.biome_distributions[idx] = 0.30;
                 } else {
-                    self.biome_distributions[bi][ri] = others_weight;
+                    self.biome_distributions[idx] = others_weight;
                 }
             }
         }
     }
 
-    fn toroidalDistSq(x1: u32, y1: u32, x2: u32, y2: u32) u32 {
+    fn toroidalDistSq(x1: u32, y1: u32, x2: u32, y2: u32, width: u32, height: u32) u32 {
         const dx_raw = if (x1 > x2) x1 - x2 else x2 - x1;
-        const dx = @min(dx_raw, WIDTH - dx_raw);
+        const dx = @min(dx_raw, width - dx_raw);
         const dy_raw = if (y1 > y2) y1 - y2 else y2 - y1;
-        const dy = @min(dy_raw, HEIGHT - dy_raw);
+        const dy = @min(dy_raw, height - dy_raw);
         return dx * dx + dy * dy;
     }
 
     fn populateGrid(self: *Grid) !void {
-        // Build a shuffled index array
-        var indices: [GRID_SIZE]u32 = undefined;
-        for (0..GRID_SIZE) |i| {
+        const grid_size = self.config.gridSize();
+
+        // Heap-allocate the shuffled index array
+        const indices = try self.allocator.alloc(u32, grid_size);
+        defer self.allocator.free(indices);
+
+        for (0..grid_size) |i| {
             indices[i] = @intCast(i);
         }
-        self.rng.shuffle(u32, &indices);
+        self.rng.shuffle(u32, indices);
 
-        const num_organisms: u32 = @intFromFloat(@as(f32, @floatFromInt(GRID_SIZE)) * INITIAL_ORGANISM_FRACTION);
-        const num_resources: u32 = @intFromFloat(@as(f32, @floatFromInt(GRID_SIZE)) * INITIAL_RESOURCE_FRACTION);
+        const num_organisms: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * self.config.initial_organism_fraction);
+        const num_resources: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * self.config.initial_resource_fraction);
 
         // Place organisms
         for (indices[0..num_organisms]) |idx| {
-            const depth = self.rng.intRangeAtMost(u32, INITIAL_EXPR_MIN_DEPTH, INITIAL_EXPR_MAX_DEPTH);
+            const depth = self.rng.intRangeAtMost(u32, self.config.initial_expr_min_depth, self.config.initial_expr_max_depth);
             const expr = try Expr.initRandom(depth, 0, 0, self.allocator, self.rng);
             self.cells[idx] = .{ .organism = .{
                 .expr = expr,
-                .energy = INITIAL_ORGANISM_ENERGY,
+                .energy = self.config.initial_organism_energy,
                 .age = 0,
                 .lineage_id = self.nextLineageId(),
                 .parent_lineage = null,
@@ -269,24 +274,24 @@ pub const Grid = struct {
     }
 
     fn sampleResourceKind(self: *Grid, biome: u8) ResourceKind {
-        const dist = self.biome_distributions[biome];
+        const base = @as(u32, biome) * ResourceKind.COUNT;
         const roll = self.rng.float(f32);
         var cumulative: f32 = 0.0;
         for (0..ResourceKind.COUNT) |i| {
-            cumulative += dist[i];
+            cumulative += self.biome_distributions[base + i];
             if (roll < cumulative) {
                 return @enumFromInt(i);
             }
         }
-        // Floating point edge case — return last
         return @enumFromInt(ResourceKind.COUNT - 1);
     }
 
     pub fn injectResources(self: *Grid) void {
-        const num_to_inject: u32 = @intFromFloat(@as(f32, @floatFromInt(GRID_SIZE)) * RESOURCE_INJECTION_RATE);
+        const grid_size = self.config.gridSize();
+        const num_to_inject: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * self.config.resource_injection_rate);
 
         for (0..num_to_inject) |_| {
-            const idx = self.rng.intRangeAtMost(u32, 0, GRID_SIZE - 1);
+            const idx = self.rng.intRangeAtMost(u32, 0, grid_size - 1);
             if (self.cells[idx] == .empty) {
                 const kind = self.sampleResourceKind(self.biome_map[idx]);
                 self.cells[idx] = .{ .resource = .{
@@ -302,7 +307,7 @@ pub const Grid = struct {
             switch (cell.*) {
                 .resource => |*res| {
                     res.age += 1;
-                    if (res.age >= RESOURCE_MAX_AGE) {
+                    if (res.age >= self.config.resource_max_age) {
                         cell.* = .empty;
                     }
                 },
@@ -311,11 +316,13 @@ pub const Grid = struct {
         }
     }
 
-    pub fn getNeighborIndices(idx: u32) [8]u32 {
-        const x: i32 = @intCast(idx % WIDTH);
-        const y: i32 = @intCast(idx / WIDTH);
-        const w: i32 = @intCast(WIDTH);
-        const h: i32 = @intCast(HEIGHT);
+    pub fn getNeighborIndices(self: *const Grid, idx: u32) [8]u32 {
+        const width = self.config.width;
+        const height = self.config.height;
+        const x: i32 = @intCast(idx % width);
+        const y: i32 = @intCast(idx / width);
+        const w: i32 = @intCast(width);
+        const h: i32 = @intCast(height);
         const offsets = [8][2]i2{
             .{ -1, -1 }, .{ 0, -1 }, .{ 1, -1 },
             .{ -1, 0 },              .{ 1, 0 },
@@ -349,37 +356,49 @@ pub const Grid = struct {
 // Tests
 // ============================================================
 
+const DEFAULT_CONFIG = Config{ .width = 20, .height = 20 };
+
 test "toroidal distance wraps correctly" {
+    const width: u32 = 150;
+    const height: u32 = 150;
+
     // Adjacent across the left-right boundary
-    const dist = Grid.toroidalDistSq(0, 0, WIDTH - 1, 0);
+    const dist = Grid.toroidalDistSq(0, 0, width - 1, 0, width, height);
     try std.testing.expectEqual(@as(u32, 1), dist);
 
     // Adjacent across the top-bottom boundary
-    const dist2 = Grid.toroidalDistSq(0, 0, 0, HEIGHT - 1);
+    const dist2 = Grid.toroidalDistSq(0, 0, 0, height - 1, width, height);
     try std.testing.expectEqual(@as(u32, 1), dist2);
 
     // Same cell
-    const dist3 = Grid.toroidalDistSq(50, 50, 50, 50);
+    const dist3 = Grid.toroidalDistSq(50, 50, 50, 50, width, height);
     try std.testing.expectEqual(@as(u32, 0), dist3);
 }
 
 test "getNeighborIndices wraps at corners" {
+    const allocator = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(42);
+    const config = DEFAULT_CONFIG;
+
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
+    defer grid.deinit();
+
     // Top-left corner (index 0)
-    const neighbors = Grid.getNeighborIndices(0);
+    const neighbors = grid.getNeighborIndices(0);
 
     // Should include bottom-right wrap (WIDTH-1, HEIGHT-1)
     var found_bottom_right = false;
-    const expected_br = (HEIGHT - 1) * WIDTH + (WIDTH - 1);
+    const expected_br = (config.height - 1) * config.width + (config.width - 1);
     for (neighbors) |n| {
         if (n == expected_br) found_bottom_right = true;
     }
     try std.testing.expect(found_bottom_right);
 
     // Middle cell should have straightforward neighbors
-    const mid_idx: u32 = 75 * WIDTH + 75;
-    const mid_neighbors = Grid.getNeighborIndices(mid_idx);
+    const mid_idx: u32 = 10 * config.width + 10;
+    const mid_neighbors = grid.getNeighborIndices(mid_idx);
     var found_above = false;
-    const expected_above = 74 * WIDTH + 75;
+    const expected_above = 9 * config.width + 10;
     for (mid_neighbors) |n| {
         if (n == expected_above) found_above = true;
     }
@@ -389,24 +408,27 @@ test "getNeighborIndices wraps at corners" {
 test "grid init and deinit does not leak" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(42);
+    const config = DEFAULT_CONFIG;
+    const grid_size = config.gridSize();
 
-    var grid = try Grid.init(allocator, prng.random(), 42);
+    var grid = try Grid.init(allocator, prng.random(), 42, config);
     defer grid.deinit();
 
     const counts = grid.countCells();
-    const expected_organisms: u32 = @intFromFloat(@as(f32, @floatFromInt(GRID_SIZE)) * INITIAL_ORGANISM_FRACTION);
-    const expected_resources: u32 = @intFromFloat(@as(f32, @floatFromInt(GRID_SIZE)) * INITIAL_RESOURCE_FRACTION);
+    const expected_organisms: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * config.initial_organism_fraction);
+    const expected_resources: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * config.initial_resource_fraction);
 
     try std.testing.expectEqual(expected_organisms, counts.organisms);
     try std.testing.expectEqual(expected_resources, counts.resources);
-    try std.testing.expectEqual(GRID_SIZE - expected_organisms - expected_resources, counts.empty);
+    try std.testing.expectEqual(grid_size - expected_organisms - expected_resources, counts.empty);
 }
 
 test "resource injection only fills empty cells" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(123);
+    const config = DEFAULT_CONFIG;
 
-    var grid = try Grid.init(allocator, prng.random(), 123);
+    var grid = try Grid.init(allocator, prng.random(), 123, config);
     defer grid.deinit();
 
     const before = grid.countCells();
@@ -422,14 +444,15 @@ test "resource injection only fills empty cells" {
 test "resource decay removes old resources" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(7);
+    const config = DEFAULT_CONFIG;
 
-    var grid = try Grid.init(allocator, prng.random(), 7);
+    var grid = try Grid.init(allocator, prng.random(), 7, config);
     defer grid.deinit();
 
     // Age all resources to just below max
     for (grid.cells) |*cell| {
         switch (cell.*) {
-            .resource => |*res| res.age = RESOURCE_MAX_AGE - 1,
+            .resource => |*res| res.age = config.resource_max_age - 1,
             else => {},
         }
     }
@@ -446,14 +469,15 @@ test "resource decay removes old resources" {
 test "every biome distribution sums to ~1.0" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(55);
+    const config = DEFAULT_CONFIG;
 
-    var grid = try Grid.init(allocator, prng.random(), 55);
+    var grid = try Grid.init(allocator, prng.random(), 55, config);
     defer grid.deinit();
 
-    for (0..NUM_BIOMES) |bi| {
+    for (0..config.num_biomes) |bi| {
         var sum: f32 = 0.0;
         for (0..ResourceKind.COUNT) |ri| {
-            sum += grid.biome_distributions[bi][ri];
+            sum += grid.biome_distributions[bi * ResourceKind.COUNT + ri];
         }
         try std.testing.expectApproxEqAbs(@as(f32, 1.0), sum, 0.01);
     }
@@ -462,15 +486,16 @@ test "every biome distribution sums to ~1.0" {
 test "all biomes are represented in the biome map" {
     const allocator = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(88);
+    const config = DEFAULT_CONFIG;
 
-    var grid = try Grid.init(allocator, prng.random(), 88);
+    var grid = try Grid.init(allocator, prng.random(), 88, config);
     defer grid.deinit();
 
-    var seen = [_]bool{false} ** NUM_BIOMES;
+    var seen = [_]bool{false} ** 16;
     for (grid.biome_map) |b| {
         seen[b] = true;
     }
-    for (seen) |s| {
-        try std.testing.expect(s);
+    for (0..config.num_biomes) |i| {
+        try std.testing.expect(seen[i]);
     }
 }
