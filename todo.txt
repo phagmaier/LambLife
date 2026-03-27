@@ -1,7 +1,0 @@
-  1. metrics.zig — you can't tune without observability
-  2. CLI args — so you can experiment with different configs/seeds without recompiling
-  3. Seed replicators — helps bootstrap interesting dynamics
-  4. Expression display — helps debug what's actually evolving
-  5. Snapshots — save/resume long runs
-  6. Perturbation — only if equilibrium is too stable
-  7. Visualization — last, as the plan says
