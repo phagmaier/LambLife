@@ -48,6 +48,7 @@ pub const Config = struct {
 
     // Simulation
     log_interval: u64 = 100,
+    snapshot_interval: u64 = 10_000,
 
     pub fn gridSize(self: Config) u32 {
         return self.width * self.height;

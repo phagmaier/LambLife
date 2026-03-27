@@ -5,6 +5,7 @@ const interaction = @import("interaction.zig");
 const TickStats = interaction.TickStats;
 const Config = @import("config.zig").Config;
 const metrics = @import("metrics.zig");
+const snapshot = @import("snapshot.zig");
 
 pub const StepResult = struct {
     tick_stats: TickStats,
@@ -20,6 +21,7 @@ pub const Simulation = struct {
     allocator: std.mem.Allocator,
     metric_logger: metrics.MetricLogger,
     lineage_log: metrics.LineageLog,
+    snapshot_dir: ?[]const u8,
 
     pub fn init(allocator: std.mem.Allocator, config: Config, seed: u64, csv_path: ?[]const u8) !Simulation {
         var sim = Simulation{
@@ -30,9 +32,23 @@ pub const Simulation = struct {
             .allocator = allocator,
             .metric_logger = try metrics.MetricLogger.init(csv_path),
             .lineage_log = metrics.LineageLog.init(allocator),
+            .snapshot_dir = null,
         };
         sim.grid = try Grid.init(allocator, sim.prng.random(), seed, config);
         return sim;
+    }
+
+    pub fn loadFromSnapshot(allocator: std.mem.Allocator, path: []const u8, csv_path: ?[]const u8) !Simulation {
+        var sim = try snapshot.load(allocator, path, csv_path);
+        sim.snapshot_dir = null;
+        return sim;
+    }
+
+    /// Re-wire grid.rng to point at this simulation's prng.
+    /// Must be called after the Simulation is in its final memory location
+    /// (e.g. after assignment from init/load, before calling step/run).
+    pub fn rewireRng(self: *Simulation) void {
+        self.grid.rng = self.prng.random();
     }
 
     pub fn deinit(self: *Simulation) void {
@@ -131,6 +147,16 @@ pub const Simulation = struct {
 
                 metrics.printTickMetrics(m);
                 try self.metric_logger.log(m);
+            }
+
+            // Save snapshot at configured interval
+            if (self.snapshot_dir != null and self.config.snapshot_interval > 0 and self.tick % self.config.snapshot_interval == 0) {
+                const path = try snapshot.snapshotPath(self.allocator, self.snapshot_dir.?, self.tick);
+                defer self.allocator.free(path);
+                snapshot.save(self, path) catch |err| {
+                    std.debug.print("Warning: snapshot save failed at tick {d}: {}\n", .{ self.tick, err });
+                };
+                std.debug.print("Snapshot saved: {s}\n", .{path});
             }
         }
     }

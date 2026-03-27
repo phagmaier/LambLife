@@ -11,6 +11,8 @@ fn printUsage() void {
         \\  --ticks=N           Number of ticks to run (default: 10000)
         \\  --metrics=FILE      Metrics CSV output path (default: metrics.csv)
         \\  --lineage=FILE      Lineage CSV output path (default: lineage.csv)
+        \\  --snapshot-dir=DIR  Directory for snapshots (default: snapshots)
+        \\  --resume=FILE       Resume from a snapshot file
         \\  --help              Show this help message
         \\
         \\Config overrides (--name=value):
@@ -33,12 +35,14 @@ fn printUsage() void {
     std.debug.print("\n", .{});
 }
 
-fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, seed: ?u64, ticks: u64, metrics_path: []const u8, lineage_path: []const u8 } {
+fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, seed: ?u64, ticks: u64, metrics_path: []const u8, lineage_path: []const u8, snapshot_dir: []const u8, resume_path: ?[]const u8 } {
     var config = Config{};
     var seed: ?u64 = null;
     var ticks: u64 = 10_000;
     var metrics_path: []const u8 = "metrics.csv";
     var lineage_path: []const u8 = "lineage.csv";
+    var snapshot_dir: []const u8 = "snapshots";
+    var resume_path: ?[]const u8 = null;
 
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
@@ -78,6 +82,14 @@ fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, see
             lineage_path = value;
             continue;
         }
+        if (std.mem.eql(u8, key, "snapshot-dir")) {
+            snapshot_dir = value;
+            continue;
+        }
+        if (std.mem.eql(u8, key, "resume")) {
+            resume_path = value;
+            continue;
+        }
 
         // Try to match against Config fields
         if (!setConfigField(&config, key, value)) {
@@ -92,6 +104,8 @@ fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, see
         .ticks = ticks,
         .metrics_path = metrics_path,
         .lineage_path = lineage_path,
+        .snapshot_dir = snapshot_dir,
+        .resume_path = resume_path,
     };
 }
 
@@ -136,14 +150,36 @@ pub fn main() !void {
         std.process.exit(1);
     };
 
-    const config = parsed.config;
-    const seed: u64 = parsed.seed orelse @intCast(std.time.timestamp());
+    // Ensure snapshot directory exists
+    std.fs.cwd().makePath(parsed.snapshot_dir) catch |err| {
+        std.debug.print("Warning: could not create snapshot dir '{s}': {}\n", .{ parsed.snapshot_dir, err });
+    };
 
-    std.debug.print("LambLife starting: {d}x{d} grid, seed={d}, ticks={d}\n", .{ config.width, config.height, seed, parsed.ticks });
+    var sim: Simulation = undefined;
 
-    var sim = try Simulation.init(allocator, config, seed, parsed.metrics_path);
+    if (parsed.resume_path) |resume_path| {
+        sim = Simulation.loadFromSnapshot(allocator, resume_path, parsed.metrics_path) catch |err| {
+            std.debug.print("Failed to load snapshot '{s}': {}\n", .{ resume_path, err });
+            std.process.exit(1);
+        };
+        std.debug.print("LambLife resuming from {s}: {d}x{d} grid, tick={d}, running {d} more ticks\n", .{
+            resume_path,
+            sim.config.width,
+            sim.config.height,
+            sim.tick,
+            parsed.ticks,
+        });
+    } else {
+        const config = parsed.config;
+        const seed: u64 = parsed.seed orelse @intCast(std.time.timestamp());
+        std.debug.print("LambLife starting: {d}x{d} grid, seed={d}, ticks={d}\n", .{ config.width, config.height, seed, parsed.ticks });
+        sim = try Simulation.init(allocator, config, seed, parsed.metrics_path);
+    }
     defer sim.deinit();
 
+    // Re-wire grid rng to point at the now-settled prng
+    sim.rewireRng();
+    sim.snapshot_dir = parsed.snapshot_dir;
     try sim.run(parsed.ticks);
 
     sim.lineage_log.writeCsv(parsed.lineage_path) catch |err| {
@@ -163,4 +199,5 @@ test {
     _ = @import("simulation.zig");
     _ = @import("config.zig");
     _ = @import("metrics.zig");
+    _ = @import("snapshot.zig");
 }
