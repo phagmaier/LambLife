@@ -16,9 +16,13 @@ const WINDOW_W = 1400;
 const WINDOW_H = 900;
 const INSPECTOR_W = 300;
 const GRAPH_H = 200;
-const HUD_H = 24;
+const HUD_H = 40;
 
 const METRIC_HISTORY_LEN = 2000;
+
+// Time budget for simulation per frame (nanoseconds).
+// 12ms leaves ~4ms for rendering at 60fps target.
+const SIM_BUDGET_NS: i128 = 12_000_000;
 
 const SpeedLevel = struct {
     steps: u32,
@@ -28,9 +32,9 @@ const SpeedLevel = struct {
 const speed_levels = [_]SpeedLevel{
     .{ .steps = 1, .label = "1x" },
     .{ .steps = 5, .label = "5x" },
-    .{ .steps = 10, .label = "10x" },
-    .{ .steps = 50, .label = "50x" },
+    .{ .steps = 25, .label = "25x" },
     .{ .steps = 100, .label = "100x" },
+    .{ .steps = 10000, .label = "Max" },
 };
 
 const MetricHistory = struct {
@@ -88,39 +92,42 @@ fn drawTextFmt(comptime fmt: []const u8, args: anytype, x: i32, y: i32, font_siz
 }
 
 pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
-    // Debug: print grid state before opening window
-    const counts = sim.grid.countCells();
-    std.debug.print("VIZ DEBUG: grid {d}x{d}, organisms={d}, resources={d}, empty={d}\n", .{
-        sim.config.width, sim.config.height, counts.organisms, counts.resources, counts.empty,
-    });
-
     rl.initWindow(WINDOW_W, WINDOW_H, "LambLife - Lambda Calculus Artificial Life");
     defer rl.closeWindow();
     rl.setTargetFPS(60);
 
     var history = MetricHistory.init();
-    var paused = true; // Start paused so first frame renders immediately
-    var speed_idx: usize = 0; // start at 1x
+    var paused = true;
+    var speed_idx: usize = 0;
     var show_graphs = true;
     var show_inspector = true;
     var show_biomes = false;
 
-    // Camera for grid pan/zoom
-    var cam_offset_x: f32 = 0;
-    var cam_offset_y: f32 = 0;
+    // Camera for grid pan/zoom — center the grid initially
     var cam_scale: f32 = computeDefaultScale(sim, show_inspector, show_graphs);
+    var cam_offset_x: f32 = computeCenterOffsetX(sim, cam_scale, show_inspector);
+    var cam_offset_y: f32 = computeCenterOffsetY(sim, cam_scale, show_graphs);
 
     // Selected cell
     var selected_cell: ?u32 = null;
 
-    // Expression string buffers for inspector (allocated, null-terminated)
+    // Expression string buffers for inspector
     var expr_pretty_buf: ?[]u8 = null;
     defer if (expr_pretty_buf) |buf| allocator.free(buf);
     var expr_debruijn_buf: ?[]u8 = null;
     defer if (expr_debruijn_buf) |buf| allocator.free(buf);
 
+    // Steps/sec tracking
+    var steps_this_second: u32 = 0;
+    var steps_per_sec: u32 = 0;
+    var last_sec_time: i128 = std.time.nanoTimestamp();
+
+    // Inspector refresh counter
+    var inspector_refresh: u32 = 0;
+
     while (!rl.windowShouldClose()) {
         // --- Input ---
+        if (rl.isKeyPressed(.escape)) break;
         if (rl.isKeyPressed(.space)) paused = !paused;
         if (rl.isKeyPressed(.equal) or rl.isKeyPressed(.kp_add)) {
             if (speed_idx < speed_levels.len - 1) speed_idx += 1;
@@ -129,18 +136,22 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
             if (speed_idx > 0) speed_idx -= 1;
         }
         if (rl.isKeyPressed(.r)) {
-            cam_offset_x = 0;
-            cam_offset_y = 0;
             cam_scale = computeDefaultScale(sim, show_inspector, show_graphs);
+            cam_offset_x = computeCenterOffsetX(sim, cam_scale, show_inspector);
+            cam_offset_y = computeCenterOffsetY(sim, cam_scale, show_graphs);
         }
         if (rl.isKeyPressed(.b)) show_biomes = !show_biomes;
         if (rl.isKeyPressed(.g)) {
             show_graphs = !show_graphs;
             cam_scale = computeDefaultScale(sim, show_inspector, show_graphs);
+            cam_offset_x = computeCenterOffsetX(sim, cam_scale, show_inspector);
+            cam_offset_y = computeCenterOffsetY(sim, cam_scale, show_graphs);
         }
         if (rl.isKeyPressed(.i)) {
             show_inspector = !show_inspector;
             cam_scale = computeDefaultScale(sim, show_inspector, show_graphs);
+            cam_offset_x = computeCenterOffsetX(sim, cam_scale, show_inspector);
+            cam_offset_y = computeCenterOffsetY(sim, cam_scale, show_graphs);
         }
 
         // Mouse wheel zoom
@@ -163,7 +174,7 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
             const grid_area_w = gridAreaWidth(show_inspector);
             const grid_area_h = gridAreaHeight(show_graphs);
 
-            if (mouse.x < @as(f32, @floatFromInt(grid_area_w)) and mouse.y < @as(f32, @floatFromInt(grid_area_h))) {
+            if (mouse.x < @as(f32, @floatFromInt(grid_area_w)) and mouse.y >= @as(f32, @floatFromInt(HUD_H)) and mouse.y < @as(f32, @floatFromInt(grid_area_h))) {
                 const gx_f = (mouse.x - cam_offset_x) / cam_scale;
                 const gy_f = (mouse.y - cam_offset_y) / cam_scale;
                 const gx: i32 = @intFromFloat(gx_f);
@@ -173,53 +184,49 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
                 if (gx >= 0 and gx < w and gy >= 0 and gy < h) {
                     const idx: u32 = @intCast(gy * w + gx);
                     selected_cell = idx;
-
-                    // Update expression strings
-                    if (expr_pretty_buf) |buf| allocator.free(buf);
-                    expr_pretty_buf = null;
-                    if (expr_debruijn_buf) |buf| allocator.free(buf);
-                    expr_debruijn_buf = null;
-
-                    switch (sim.grid.cells[idx]) {
-                        .organism => |org| {
-                            expr_pretty_buf = org.expr.toStringPretty(allocator) catch null;
-                            expr_debruijn_buf = org.expr.toStringDeBruijn(allocator) catch null;
-                        },
-                        else => {},
-                    }
+                    refreshInspectorStrings(sim, idx, &expr_pretty_buf, &expr_debruijn_buf, allocator);
                 }
             }
         }
 
-        // --- Render ---
+        // Auto-refresh inspector strings every 30 frames while running
+        if (!paused and selected_cell != null) {
+            inspector_refresh += 1;
+            if (inspector_refresh >= 30) {
+                inspector_refresh = 0;
+                refreshInspectorStrings(sim, selected_cell.?, &expr_pretty_buf, &expr_debruijn_buf, allocator);
+            }
+        }
+
+        // --- Render (before sim step so first frame shows immediately) ---
         rl.beginDrawing();
         rl.clearBackground(rl.Color.init(20, 20, 20, 255));
 
-        // Grid
         renderGrid(sim, cam_offset_x, cam_offset_y, cam_scale, show_biomes, selected_cell, show_inspector, show_graphs);
 
-        // Inspector panel
         if (show_inspector) {
             renderInspector(sim, selected_cell, expr_pretty_buf, expr_debruijn_buf, show_graphs);
         }
 
-        // Graphs
         if (show_graphs) {
             renderGraphs(&history, show_inspector);
         }
 
-        // HUD
-        renderHUD(sim, paused, speed_idx);
+        renderHUD(sim, paused, speed_idx, steps_per_sec);
 
         rl.endDrawing();
 
-        // --- Simulation step (after render so first frame shows immediately) ---
+        // --- Simulation step with time budget ---
         if (!paused) {
-            const steps = speed_levels[speed_idx].steps;
-            for (0..steps) |_| {
-                const result = sim.step() catch break;
+            const frame_start = std.time.nanoTimestamp();
+            var steps_done: u32 = 0;
+            const target = speed_levels[speed_idx].steps;
 
-                // Record lineage
+            while (steps_done < target) {
+                const result = sim.step() catch break;
+                steps_done += 1;
+
+                // Record lineage for newborns
                 for (sim.grid.cells) |cell| {
                     switch (cell) {
                         .organism => |org| {
@@ -237,7 +244,7 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
                     }
                 }
 
-                // Collect metrics periodically
+                // Collect metrics every tick for graphs (lightweight)
                 if (sim.tick % sim.config.log_interval == 0) {
                     var m = metrics.collectTickMetrics(&sim.grid, sim.tick, result.tick_stats, result.deaths_energy, result.deaths_age);
 
@@ -252,7 +259,20 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
                     history.push(m);
                     sim.metric_logger.log(m) catch {};
                 }
+
+                // Time budget check — break if we've used too much time
+                if (std.time.nanoTimestamp() - frame_start > SIM_BUDGET_NS) break;
             }
+
+            steps_this_second += steps_done;
+        }
+
+        // Update steps/sec counter
+        const now = std.time.nanoTimestamp();
+        if (now - last_sec_time >= 1_000_000_000) {
+            steps_per_sec = steps_this_second;
+            steps_this_second = 0;
+            last_sec_time = now;
         }
     }
 }
@@ -265,6 +285,18 @@ fn computeDefaultScale(sim: *Simulation, show_inspector: bool, show_graphs: bool
     return @min(area_w / grid_w, area_h / grid_h);
 }
 
+fn computeCenterOffsetX(sim: *Simulation, scale: f32, show_inspector: bool) f32 {
+    const area_w: f32 = @floatFromInt(gridAreaWidth(show_inspector));
+    const grid_px: f32 = @as(f32, @floatFromInt(sim.config.width)) * scale;
+    return (area_w - grid_px) / 2.0;
+}
+
+fn computeCenterOffsetY(sim: *Simulation, scale: f32, show_graphs: bool) f32 {
+    const area_h: f32 = @floatFromInt(gridAreaHeight(show_graphs));
+    const grid_px: f32 = @as(f32, @floatFromInt(sim.config.height)) * scale;
+    return (area_h - grid_px) / 2.0;
+}
+
 fn gridAreaWidth(show_inspector: bool) i32 {
     return if (show_inspector) WINDOW_W - INSPECTOR_W else WINDOW_W;
 }
@@ -273,17 +305,31 @@ fn gridAreaHeight(show_graphs: bool) i32 {
     return if (show_graphs) WINDOW_H - GRAPH_H else WINDOW_H;
 }
 
+fn refreshInspectorStrings(sim: *Simulation, idx: u32, pretty: *?[]u8, debruijn: *?[]u8, allocator: std.mem.Allocator) void {
+    if (pretty.*) |buf| allocator.free(buf);
+    pretty.* = null;
+    if (debruijn.*) |buf| allocator.free(buf);
+    debruijn.* = null;
+
+    switch (sim.grid.cells[idx]) {
+        .organism => |org| {
+            pretty.* = org.expr.toStringPretty(allocator) catch null;
+            debruijn.* = org.expr.toStringDeBruijn(allocator) catch null;
+        },
+        else => {},
+    }
+}
+
 fn renderGrid(sim: *Simulation, offset_x: f32, offset_y: f32, scale: f32, show_biomes: bool, selected_cell: ?u32, show_inspector: bool, show_graphs: bool) void {
     const w = sim.config.width;
     const h = sim.config.height;
 
-    // Clip to grid area
     const area_w = gridAreaWidth(show_inspector);
     const area_h = gridAreaHeight(show_graphs);
     rl.beginScissorMode(0, 0, area_w, area_h);
     defer rl.endScissorMode();
 
-    // Determine visible cell range for culling
+    // Visible cell range for culling
     const start_x = @max(0, @as(i32, @intFromFloat(-offset_x / scale)));
     const start_y = @max(0, @as(i32, @intFromFloat(-offset_y / scale)));
     const end_x = @min(@as(i32, @intCast(w)), @as(i32, @intFromFloat((@as(f32, @floatFromInt(area_w)) - offset_x) / scale)) + 1);
@@ -291,7 +337,8 @@ fn renderGrid(sim: *Simulation, offset_x: f32, offset_y: f32, scale: f32, show_b
 
     if (start_x >= end_x or start_y >= end_y) return;
 
-    const cell_px: i32 = @max(1, @as(i32, @intFromFloat(scale)));
+    // Use ceil so cells slightly overlap — no black gaps between cells
+    const cell_px: i32 = @max(1, @as(i32, @intFromFloat(@ceil(scale))));
 
     var y: i32 = start_y;
     while (y < end_y) : (y += 1) {
@@ -310,7 +357,7 @@ fn renderGrid(sim: *Simulation, offset_x: f32, offset_y: f32, scale: f32, show_b
         }
     }
 
-    // Draw selection highlight
+    // Selection highlight
     if (selected_cell) |sel| {
         const sx: i32 = @intCast(sel % w);
         const sy: i32 = @intCast(sel / w);
@@ -322,7 +369,7 @@ fn renderGrid(sim: *Simulation, offset_x: f32, offset_y: f32, scale: f32, show_b
 
 fn cellColor(cell: Cell) rl.Color {
     return switch (cell) {
-        .empty => rl.Color.init(0, 0, 0, 255),
+        .empty => rl.Color.init(12, 12, 16, 255),
         .resource => |res| resourceColor(res.kind),
         .organism => |org| organismColor(org),
     };
@@ -330,32 +377,33 @@ fn cellColor(cell: Cell) rl.Color {
 
 fn resourceColor(kind: ResourceKind) rl.Color {
     return switch (kind) {
-        .identity => rl.Color.init(0, 180, 220, 255),
-        .true_ => rl.Color.init(50, 100, 255, 255),
-        .false_ => rl.Color.init(100, 50, 200, 255),
-        .self_apply => rl.Color.init(0, 200, 180, 255),
-        .pair => rl.Color.init(100, 180, 255, 255),
-        .zero => rl.Color.init(30, 30, 150, 255),
+        .identity => rl.Color.init(0, 210, 255, 255),
+        .true_ => rl.Color.init(70, 130, 255, 255),
+        .false_ => rl.Color.init(140, 70, 255, 255),
+        .self_apply => rl.Color.init(0, 230, 200, 255),
+        .pair => rl.Color.init(120, 200, 255, 255),
+        .zero => rl.Color.init(50, 50, 180, 255),
     };
 }
 
 fn organismColor(org: Organism) rl.Color {
     const h = org.expr.hash();
-    const hue: f32 = @floatFromInt(h % 360);
-    const brightness = std.math.clamp(@as(f32, @floatCast(org.energy)) / 200.0, 0.2, 1.0);
-    return hsvToRgb(hue, 0.8, brightness);
+    // Use golden-angle spacing for better hue distribution
+    const hue: f32 = @mod(@as(f32, @floatFromInt(h % 1000)) * 0.618033988 * 360.0, 360.0);
+    const brightness = std.math.clamp(@as(f32, @floatCast(org.energy)) / 150.0, 0.4, 1.0);
+    return hsvToRgb(hue, 0.85, brightness);
 }
 
 fn biomeColor(biome_id: u8) rl.Color {
     const colors = [_]rl.Color{
-        rl.Color.init(40, 20, 20, 255),
-        rl.Color.init(20, 40, 20, 255),
-        rl.Color.init(20, 20, 40, 255),
-        rl.Color.init(40, 40, 20, 255),
-        rl.Color.init(40, 20, 40, 255),
-        rl.Color.init(20, 40, 40, 255),
-        rl.Color.init(30, 30, 30, 255),
-        rl.Color.init(35, 25, 25, 255),
+        rl.Color.init(50, 25, 25, 255),
+        rl.Color.init(25, 50, 25, 255),
+        rl.Color.init(25, 25, 50, 255),
+        rl.Color.init(50, 50, 25, 255),
+        rl.Color.init(50, 25, 50, 255),
+        rl.Color.init(25, 50, 50, 255),
+        rl.Color.init(40, 40, 40, 255),
+        rl.Color.init(45, 30, 30, 255),
     };
     return colors[biome_id % colors.len];
 }
@@ -402,16 +450,16 @@ fn renderInspector(sim: *Simulation, selected_cell: ?u32, expr_pretty: ?[]u8, ex
     const panel_h: i32 = if (show_graphs) WINDOW_H - GRAPH_H else WINDOW_H;
 
     // Background
-    rl.drawRectangle(panel_x, 0, INSPECTOR_W, panel_h, rl.Color.init(30, 30, 35, 255));
+    rl.drawRectangle(panel_x, 0, INSPECTOR_W, panel_h, rl.Color.init(28, 28, 33, 255));
     rl.drawLine(panel_x, 0, panel_x, panel_h, rl.Color.init(60, 60, 70, 255));
 
     var y: i32 = 10;
     const x: i32 = panel_x + 10;
-    const font_size: i32 = 14;
-    const line_h: i32 = 18;
+    const font_size: i32 = 16;
+    const line_h: i32 = 20;
 
-    rl.drawText("INSPECTOR", x, y, 16, rl.Color.init(200, 200, 220, 255));
-    y += 24;
+    rl.drawText("INSPECTOR", x, y, 18, rl.Color.init(200, 200, 220, 255));
+    y += 28;
 
     const sel = selected_cell orelse {
         rl.drawText("Click a cell to inspect", x, y, font_size, rl.Color.gray);
@@ -426,7 +474,7 @@ fn renderInspector(sim: *Simulation, selected_cell: ?u32, expr_pretty: ?[]u8, ex
 
     const biome_id = sim.grid.biome_map[sel];
     drawTextFmt("Biome: {d}", .{biome_id}, x, y, font_size, rl.Color.init(140, 140, 160, 255));
-    y += line_h + 4;
+    y += line_h + 6;
 
     switch (sim.grid.cells[sel]) {
         .empty => {
@@ -449,22 +497,18 @@ fn renderInspector(sim: *Simulation, selected_cell: ?u32, expr_pretty: ?[]u8, ex
         },
         .organism => |org| {
             rl.drawText("[ Organism ]", x, y, font_size, organismColor(org));
-            y += line_h + 4;
+            y += line_h + 6;
 
-            // Energy
             const energy_color: rl.Color = if (org.energy > 50) rl.Color.green else if (org.energy > 20) rl.Color.yellow else rl.Color.red;
             drawTextFmt("Energy: {d:.1}", .{org.energy}, x, y, font_size, energy_color);
             y += line_h;
 
-            // Age
             drawTextFmt("Age: {d}", .{org.age}, x, y, font_size, rl.Color.init(180, 180, 200, 255));
             y += line_h;
 
-            // Generation
             drawTextFmt("Generation: {d}", .{org.generation}, x, y, font_size, rl.Color.init(180, 180, 200, 255));
             y += line_h;
 
-            // Lineage
             drawTextFmt("Lineage: {d}", .{org.lineage_id}, x, y, font_size, rl.Color.init(140, 140, 160, 255));
             y += line_h;
 
@@ -473,22 +517,19 @@ fn renderInspector(sim: *Simulation, selected_cell: ?u32, expr_pretty: ?[]u8, ex
                 y += line_h;
             }
 
-            // Size
             const sz = org.expr.size();
             drawTextFmt("Size: {d} nodes", .{sz}, x, y, font_size, rl.Color.init(180, 180, 200, 255));
             y += line_h;
 
-            // Hash
             drawTextFmt("Hash: {x:0>16}", .{org.expr.hash()}, x, y, font_size, rl.Color.init(140, 140, 160, 255));
-            y += line_h + 8;
+            y += line_h + 10;
 
-            // Expression display
             rl.drawText("Expression:", x, y, font_size, rl.Color.init(200, 200, 220, 255));
             y += line_h;
 
             if (expr_pretty) |pretty| {
                 y = drawWrappedText(pretty, x, y, INSPECTOR_W - 20, font_size - 2, rl.Color.init(100, 220, 100, 255));
-                y += 4;
+                y += 6;
             }
 
             if (expr_debruijn) |db| {
@@ -513,7 +554,6 @@ fn drawWrappedText(text: []const u8, start_x: i32, start_y: i32, max_width: i32,
         const remaining = text.len - offset;
         const line_len = @min(remaining, chars_per_line);
 
-        // Copy into null-terminated buffer
         var line_buf: [256:0]u8 = [_:0]u8{0} ** 256;
         const copy_len = @min(line_len, 255);
         @memcpy(line_buf[0..copy_len], text[offset .. offset + copy_len]);
@@ -533,15 +573,14 @@ fn renderGraphs(history: *const MetricHistory, show_inspector: bool) void {
     const total_w: i32 = if (show_inspector) WINDOW_W - INSPECTOR_W else WINDOW_W;
 
     // Background
-    rl.drawRectangle(0, panel_y, total_w, GRAPH_H, rl.Color.init(25, 25, 30, 255));
+    rl.drawRectangle(0, panel_y, total_w, GRAPH_H, rl.Color.init(22, 22, 28, 255));
     rl.drawLine(0, panel_y, total_w, panel_y, rl.Color.init(60, 60, 70, 255));
 
     if (history.count < 2) {
-        rl.drawText("Collecting data...", 10, panel_y + 10, 14, rl.Color.gray);
+        rl.drawText("Waiting for data... (unpause with Space)", 10, panel_y + 90, 16, rl.Color.gray);
         return;
     }
 
-    // Draw 6 mini-graphs side by side
     const num_graphs: i32 = 6;
     const graph_w = @divTrunc(total_w - 10, num_graphs);
     const graph_h: i32 = GRAPH_H - 30;
@@ -569,7 +608,7 @@ fn renderGraphs(history: *const MetricHistory, show_inspector: bool) void {
         // Label
         rl.drawText(gdef.label, gx + 2, panel_y + 4, 12, gdef.color);
 
-        // Find min/max for auto-scaling
+        // Auto-scale Y axis
         var min_val: f32 = std.math.inf(f32);
         var max_val: f32 = -std.math.inf(f32);
         for (0..history.count) |idx| {
@@ -581,10 +620,10 @@ fn renderGraphs(history: *const MetricHistory, show_inspector: bool) void {
             max_val = min_val + 1;
         }
 
-        // Draw graph background
-        rl.drawRectangle(gx, gy, graph_w - margin * 2, graph_h, rl.Color.init(15, 15, 20, 255));
+        // Graph background
+        rl.drawRectangle(gx, gy, graph_w - margin * 2, graph_h, rl.Color.init(12, 12, 18, 255));
 
-        // Draw line
+        // Line plot
         const usable_w: f32 = @floatFromInt(graph_w - margin * 2);
         const usable_h: f32 = @floatFromInt(graph_h);
         const n: f32 = @floatFromInt(history.count);
@@ -609,25 +648,28 @@ fn renderGraphs(history: *const MetricHistory, show_inspector: bool) void {
     }
 }
 
-fn renderHUD(sim: *Simulation, paused: bool, speed_idx: usize) void {
-    // Semi-transparent background strip
-    rl.drawRectangle(0, 0, WINDOW_W, HUD_H, rl.Color.init(0, 0, 0, 180));
+fn renderHUD(sim: *Simulation, paused: bool, speed_idx: usize, steps_per_sec: u32) void {
+    // Background
+    rl.drawRectangle(0, 0, WINDOW_W, HUD_H, rl.Color.init(0, 0, 0, 200));
 
     const counts = sim.grid.countCells();
 
-    drawTextFmt("Tick: {d}  |  Pop: {d}  Res: {d}  Empty: {d}  |  Speed: {s}  |  FPS: {d}", .{
+    // Line 1: Status
+    drawTextFmt("Tick: {d}  |  Pop: {d}  Res: {d}  Empty: {d}  |  FPS: {d}", .{
         sim.tick,
         counts.organisms,
         counts.resources,
         counts.empty,
-        speed_levels[speed_idx].label,
         rl.getFPS(),
-    }, 8, 5, 14, rl.Color.init(220, 220, 220, 255));
+    }, 8, 4, 16, rl.Color.init(220, 220, 220, 255));
+
+    // Line 2: Controls and speed
+    drawTextFmt("Speed: {s}  ({d} steps/s)  |  Space:Pause  +/-:Speed  R:Reset  B:Biomes  G:Graphs  I:Inspector  Esc:Quit", .{
+        speed_levels[speed_idx].label,
+        steps_per_sec,
+    }, 8, 22, 14, rl.Color.init(140, 140, 160, 255));
 
     if (paused) {
-        rl.drawText("|| PAUSED", WINDOW_W - 120, 5, 14, rl.Color.red);
+        rl.drawText("PAUSED", WINDOW_W - 100, 4, 20, rl.Color.init(255, 80, 80, 255));
     }
-
-    // Controls hint at right side
-    rl.drawText("Space:Pause +/-:Speed R:Reset B:Biomes G:Graphs I:Inspector", WINDOW_W - 500, 5, 12, rl.Color.init(120, 120, 140, 255));
 }
