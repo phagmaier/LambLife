@@ -18,6 +18,57 @@ pub const TickStats = struct {
     resources_consumed: u32 = 0,
 };
 
+pub const TickProcessor = struct {
+    grid: *Grid,
+    indices: []u32,
+    next_idx: usize,
+    stats: TickStats,
+
+    pub fn init(grid: *Grid) !TickProcessor {
+        var org_count: u32 = 0;
+        for (grid.cells) |cell| {
+            if (cell == .organism) org_count += 1;
+        }
+
+        const indices = try grid.allocator.alloc(u32, org_count);
+        errdefer grid.allocator.free(indices);
+
+        var idx: u32 = 0;
+        for (grid.cells, 0..) |cell, i| {
+            if (cell == .organism) {
+                indices[idx] = @intCast(i);
+                idx += 1;
+            }
+        }
+
+        grid.rng.shuffle(u32, indices);
+
+        return .{
+            .grid = grid,
+            .indices = indices,
+            .next_idx = 0,
+            .stats = .{},
+        };
+    }
+
+    pub fn deinit(self: *TickProcessor) void {
+        self.grid.allocator.free(self.indices);
+        self.indices = &.{};
+        self.next_idx = 0;
+    }
+
+    pub fn advance(self: *TickProcessor, max_organisms: u32) !bool {
+        if (self.next_idx >= self.indices.len) return true;
+
+        const end_idx = @min(self.indices.len, self.next_idx + max_organisms);
+        while (self.next_idx < end_idx) : (self.next_idx += 1) {
+            try processOrganism(self.grid, self.indices[self.next_idx], &self.stats);
+        }
+
+        return self.next_idx >= self.indices.len;
+    }
+};
+
 const NeighborInfo = struct {
     index: u32,
     is_organism: bool,
@@ -30,36 +81,11 @@ const NeighborInfo = struct {
 /// Process one full tick of organism interactions.
 /// Call this once per simulation tick after resource injection/decay.
 pub fn processTick(grid: *Grid) !TickStats {
-    var stats = TickStats{};
+    var processor = try TickProcessor.init(grid);
+    defer processor.deinit();
 
-    // Count organisms to size the index buffer
-    var org_count: u32 = 0;
-    for (grid.cells) |cell| {
-        if (cell == .organism) org_count += 1;
-    }
-    if (org_count == 0) return stats;
-
-    // Collect organism indices
-    const indices = try grid.allocator.alloc(u32, org_count);
-    defer grid.allocator.free(indices);
-
-    var idx: u32 = 0;
-    for (grid.cells, 0..) |cell, i| {
-        if (cell == .organism) {
-            indices[idx] = @intCast(i);
-            idx += 1;
-        }
-    }
-
-    // Shuffle for random processing order
-    grid.rng.shuffle(u32, indices);
-
-    // Process each organism
-    for (indices) |org_idx| {
-        try processOrganism(grid, org_idx, &stats);
-    }
-
-    return stats;
+    _ = try processor.advance(@intCast(processor.indices.len));
+    return processor.stats;
 }
 
 /// Compute structural similarity between two expressions.

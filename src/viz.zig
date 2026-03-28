@@ -9,6 +9,7 @@ const Organism = grid_mod.Organism;
 const metrics = @import("metrics.zig");
 const TickMetrics = metrics.TickMetrics;
 const interaction = @import("interaction.zig");
+const TickProcessor = interaction.TickProcessor;
 const TickStats = interaction.TickStats;
 const Expr = @import("expr.zig").Expr;
 
@@ -82,6 +83,73 @@ const MetricHistory = struct {
     }
 };
 
+const Viewport = struct {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+};
+
+const HudAction = enum {
+    none,
+    toggle_pause,
+    step_once,
+    slower,
+    faster,
+    reset_view,
+};
+
+const HudButton = struct {
+    rect: rl.Rectangle,
+    label: [:0]const u8,
+    action: HudAction,
+};
+
+const VizState = struct {
+    paused: bool = true,
+    speed_idx: usize = 0,
+    show_graphs: bool = true,
+    show_inspector: bool = true,
+    show_biomes: bool = false,
+    cam_scale: f32 = 1.0,
+    cam_offset_x: f32 = 0,
+    cam_offset_y: f32 = 0,
+    selected_cell: ?u32 = null,
+    steps_this_second: u32 = 0,
+    steps_per_sec: u32 = 0,
+    last_sec_time: i128 = 0,
+    inspector_refresh: u32 = 0,
+    requested_steps: u32 = 0,
+};
+
+const PendingTickPhase = enum {
+    idle,
+    interacting,
+    death_energy,
+    death_age,
+};
+
+const PendingTick = struct {
+    phase: PendingTickPhase = .idle,
+    processor: ?TickProcessor = null,
+    scan_index: usize = 0,
+    tick_stats: TickStats = .{},
+    deaths_energy: u32 = 0,
+    deaths_age: u32 = 0,
+
+    fn deinit(self: *PendingTick) void {
+        if (self.processor) |*processor| {
+            processor.deinit();
+            self.processor = null;
+        }
+        self.phase = .idle;
+        self.scan_index = 0;
+        self.tick_stats = .{};
+        self.deaths_energy = 0;
+        self.deaths_age = 0;
+    }
+};
+
 /// Helper: format into a stack-allocated null-terminated buffer and call drawText.
 fn drawTextFmt(comptime fmt: []const u8, args: anytype, x: i32, y: i32, font_size: i32, color: rl.Color) void {
     var buf: [512:0]u8 = [_:0]u8{0} ** 512;
@@ -97,19 +165,12 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
     rl.setTargetFPS(60);
 
     var history = MetricHistory.init();
-    var paused = true;
-    var speed_idx: usize = 0;
-    var show_graphs = true;
-    var show_inspector = true;
-    var show_biomes = false;
-
-    // Camera for grid pan/zoom — center the grid initially
-    var cam_scale: f32 = computeDefaultScale(sim, show_inspector, show_graphs);
-    var cam_offset_x: f32 = computeCenterOffsetX(sim, cam_scale, show_inspector);
-    var cam_offset_y: f32 = computeCenterOffsetY(sim, cam_scale, show_graphs);
-
-    // Selected cell
-    var selected_cell: ?u32 = null;
+    var state = VizState{
+        .last_sec_time = std.time.nanoTimestamp(),
+    };
+    var pending_tick = PendingTick{};
+    defer pending_tick.deinit();
+    resetCamera(sim, &state);
 
     // Expression string buffers for inspector
     var expr_pretty_buf: ?[]u8 = null;
@@ -117,192 +178,63 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
     var expr_debruijn_buf: ?[]u8 = null;
     defer if (expr_debruijn_buf) |buf| allocator.free(buf);
 
-    // Steps/sec tracking
-    var steps_this_second: u32 = 0;
-    var steps_per_sec: u32 = 0;
-    var last_sec_time: i128 = std.time.nanoTimestamp();
-
-    // Inspector refresh counter
-    var inspector_refresh: u32 = 0;
-
     while (!rl.windowShouldClose()) {
-        // --- Input ---
-        if (rl.isKeyPressed(.escape)) break;
-        if (rl.isKeyPressed(.space)) paused = !paused;
-        if (rl.isKeyPressed(.equal) or rl.isKeyPressed(.kp_add)) {
-            if (speed_idx < speed_levels.len - 1) speed_idx += 1;
-        }
-        if (rl.isKeyPressed(.minus) or rl.isKeyPressed(.kp_subtract)) {
-            if (speed_idx > 0) speed_idx -= 1;
-        }
-        if (rl.isKeyPressed(.r)) {
-            cam_scale = computeDefaultScale(sim, show_inspector, show_graphs);
-            cam_offset_x = computeCenterOffsetX(sim, cam_scale, show_inspector);
-            cam_offset_y = computeCenterOffsetY(sim, cam_scale, show_graphs);
-        }
-        if (rl.isKeyPressed(.b)) show_biomes = !show_biomes;
-        if (rl.isKeyPressed(.g)) {
-            show_graphs = !show_graphs;
-            cam_scale = computeDefaultScale(sim, show_inspector, show_graphs);
-            cam_offset_x = computeCenterOffsetX(sim, cam_scale, show_inspector);
-            cam_offset_y = computeCenterOffsetY(sim, cam_scale, show_graphs);
-        }
-        if (rl.isKeyPressed(.i)) {
-            show_inspector = !show_inspector;
-            cam_scale = computeDefaultScale(sim, show_inspector, show_graphs);
-            cam_offset_x = computeCenterOffsetX(sim, cam_scale, show_inspector);
-            cam_offset_y = computeCenterOffsetY(sim, cam_scale, show_graphs);
-        }
-
-        // Mouse wheel zoom
-        const wheel = rl.getMouseWheelMove();
-        if (wheel != 0) {
-            cam_scale *= if (wheel > 0) 1.1 else 0.9;
-            cam_scale = std.math.clamp(cam_scale, 1.0, 20.0);
-        }
-
-        // Mouse drag pan (right button)
-        if (rl.isMouseButtonDown(.right)) {
-            const delta = rl.getMouseDelta();
-            cam_offset_x += delta.x;
-            cam_offset_y += delta.y;
-        }
-
-        // Mouse click select cell (left button)
-        if (rl.isMouseButtonPressed(.left)) {
-            const mouse = rl.getMousePosition();
-            const grid_area_w = gridAreaWidth(show_inspector);
-            const grid_area_h = gridAreaHeight(show_graphs);
-
-            if (mouse.x < @as(f32, @floatFromInt(grid_area_w)) and mouse.y >= @as(f32, @floatFromInt(HUD_H)) and mouse.y < @as(f32, @floatFromInt(grid_area_h))) {
-                const gx_f = (mouse.x - cam_offset_x) / cam_scale;
-                const gy_f = (mouse.y - cam_offset_y) / cam_scale;
-                const gx: i32 = @intFromFloat(gx_f);
-                const gy: i32 = @intFromFloat(gy_f);
-                const w: i32 = @intCast(sim.config.width);
-                const h: i32 = @intCast(sim.config.height);
-                if (gx >= 0 and gx < w and gy >= 0 and gy < h) {
-                    const idx: u32 = @intCast(gy * w + gx);
-                    selected_cell = idx;
-                    refreshInspectorStrings(sim, idx, &expr_pretty_buf, &expr_debruijn_buf, allocator);
-                }
-            }
-        }
-
-        // Auto-refresh inspector strings every 30 frames while running
-        if (!paused and selected_cell != null) {
-            inspector_refresh += 1;
-            if (inspector_refresh >= 30) {
-                inspector_refresh = 0;
-                refreshInspectorStrings(sim, selected_cell.?, &expr_pretty_buf, &expr_debruijn_buf, allocator);
-            }
-        }
+        if (handleInput(sim, &state, &pending_tick, &history, &expr_pretty_buf, &expr_debruijn_buf, allocator)) break;
+        refreshInspectorIfNeeded(sim, &state, &expr_pretty_buf, &expr_debruijn_buf, allocator);
 
         // --- Render (before sim step so first frame shows immediately) ---
         rl.beginDrawing();
         rl.clearBackground(rl.Color.init(20, 20, 20, 255));
 
-        renderGrid(sim, cam_offset_x, cam_offset_y, cam_scale, show_biomes, selected_cell, show_inspector, show_graphs);
+        renderGrid(sim, &state);
 
-        if (show_inspector) {
-            renderInspector(sim, selected_cell, expr_pretty_buf, expr_debruijn_buf, show_graphs);
+        if (state.show_inspector) {
+            renderInspector(sim, state.selected_cell, expr_pretty_buf, expr_debruijn_buf, state.show_graphs);
         }
 
-        if (show_graphs) {
-            renderGraphs(&history, show_inspector);
+        if (state.show_graphs) {
+            renderGraphs(&history, state.show_inspector);
         }
 
-        renderHUD(sim, paused, speed_idx, steps_per_sec);
+        renderHUD(sim, &state);
 
         rl.endDrawing();
 
-        // --- Simulation step with time budget ---
-        if (!paused) {
-            const frame_start = std.time.nanoTimestamp();
-            var steps_done: u32 = 0;
-            const target = speed_levels[speed_idx].steps;
-
-            while (steps_done < target) {
-                const result = sim.step() catch break;
-                steps_done += 1;
-
-                // Record lineage for newborns
-                for (sim.grid.cells) |cell| {
-                    switch (cell) {
-                        .organism => |org| {
-                            if (org.age == 0 and org.parent_lineage != null) {
-                                sim.lineage_log.record(
-                                    sim.tick,
-                                    org.lineage_id,
-                                    org.parent_lineage.?,
-                                    org.generation,
-                                    org.expr.hash(),
-                                ) catch {};
-                            }
-                        },
-                        else => {},
-                    }
-                }
-
-                // Collect metrics every tick for graphs (lightweight)
-                if (sim.tick % sim.config.log_interval == 0) {
-                    var m = metrics.collectTickMetrics(&sim.grid, sim.tick, result.tick_stats, result.deaths_energy, result.deaths_age);
-
-                    if (sim.tick % 1000 == 0) {
-                        var report = metrics.collectDiversity(&sim.grid, allocator) catch null;
-                        if (report) |*r| {
-                            m.unique_structures = r.unique_count;
-                            r.deinit();
-                        }
-                    }
-
-                    history.push(m);
-                    sim.metric_logger.log(m) catch {};
-                }
-
-                // Time budget check — break if we've used too much time
-                if (std.time.nanoTimestamp() - frame_start > SIM_BUDGET_NS) break;
-            }
-
-            steps_this_second += steps_done;
-        }
-
-        // Update steps/sec counter
-        const now = std.time.nanoTimestamp();
-        if (now - last_sec_time >= 1_000_000_000) {
-            steps_per_sec = steps_this_second;
-            steps_this_second = 0;
-            last_sec_time = now;
-        }
+        runSimulationFrame(sim, &state, &pending_tick, &history, &expr_pretty_buf, &expr_debruijn_buf, allocator);
+        updateStepsPerSecond(&state);
     }
 }
 
+fn gridViewport(show_inspector: bool, show_graphs: bool) Viewport {
+    return .{
+        .x = 0,
+        .y = HUD_H,
+        .w = if (show_inspector) WINDOW_W - INSPECTOR_W else WINDOW_W,
+        .h = if (show_graphs) WINDOW_H - HUD_H - GRAPH_H else WINDOW_H - HUD_H,
+    };
+}
+
 fn computeDefaultScale(sim: *Simulation, show_inspector: bool, show_graphs: bool) f32 {
-    const area_w: f32 = @floatFromInt(gridAreaWidth(show_inspector));
-    const area_h: f32 = @floatFromInt(gridAreaHeight(show_graphs));
+    const viewport = gridViewport(show_inspector, show_graphs);
+    const area_w: f32 = @floatFromInt(viewport.w);
+    const area_h: f32 = @floatFromInt(viewport.h);
     const grid_w: f32 = @floatFromInt(sim.config.width);
     const grid_h: f32 = @floatFromInt(sim.config.height);
     return @min(area_w / grid_w, area_h / grid_h);
 }
 
-fn computeCenterOffsetX(sim: *Simulation, scale: f32, show_inspector: bool) f32 {
-    const area_w: f32 = @floatFromInt(gridAreaWidth(show_inspector));
+fn computeCenterOffsetX(sim: *Simulation, scale: f32, show_inspector: bool, show_graphs: bool) f32 {
+    const viewport = gridViewport(show_inspector, show_graphs);
+    const area_w: f32 = @floatFromInt(viewport.w);
     const grid_px: f32 = @as(f32, @floatFromInt(sim.config.width)) * scale;
-    return (area_w - grid_px) / 2.0;
+    return @as(f32, @floatFromInt(viewport.x)) + (area_w - grid_px) / 2.0;
 }
 
-fn computeCenterOffsetY(sim: *Simulation, scale: f32, show_graphs: bool) f32 {
-    const area_h: f32 = @floatFromInt(gridAreaHeight(show_graphs));
+fn computeCenterOffsetY(sim: *Simulation, scale: f32, show_inspector: bool, show_graphs: bool) f32 {
+    const viewport = gridViewport(show_inspector, show_graphs);
+    const area_h: f32 = @floatFromInt(viewport.h);
     const grid_px: f32 = @as(f32, @floatFromInt(sim.config.height)) * scale;
-    return (area_h - grid_px) / 2.0;
-}
-
-fn gridAreaWidth(show_inspector: bool) i32 {
-    return if (show_inspector) WINDOW_W - INSPECTOR_W else WINDOW_W;
-}
-
-fn gridAreaHeight(show_graphs: bool) i32 {
-    return if (show_graphs) WINDOW_H - GRAPH_H else WINDOW_H;
+    return @as(f32, @floatFromInt(viewport.y)) + (area_h - grid_px) / 2.0;
 }
 
 fn refreshInspectorStrings(sim: *Simulation, idx: u32, pretty: *?[]u8, debruijn: *?[]u8, allocator: std.mem.Allocator) void {
@@ -320,35 +252,331 @@ fn refreshInspectorStrings(sim: *Simulation, idx: u32, pretty: *?[]u8, debruijn:
     }
 }
 
-fn renderGrid(sim: *Simulation, offset_x: f32, offset_y: f32, scale: f32, show_biomes: bool, selected_cell: ?u32, show_inspector: bool, show_graphs: bool) void {
-    const w = sim.config.width;
-    const h = sim.config.height;
+fn resetCamera(sim: *Simulation, state: *VizState) void {
+    state.cam_scale = computeDefaultScale(sim, state.show_inspector, state.show_graphs);
+    state.cam_offset_x = computeCenterOffsetX(sim, state.cam_scale, state.show_inspector, state.show_graphs);
+    state.cam_offset_y = computeCenterOffsetY(sim, state.cam_scale, state.show_inspector, state.show_graphs);
+}
 
-    const area_w = gridAreaWidth(show_inspector);
-    const area_h = gridAreaHeight(show_graphs);
-    rl.beginScissorMode(0, 0, area_w, area_h);
+fn handleInput(sim: *Simulation, state: *VizState, pending_tick: *PendingTick, history: *MetricHistory, expr_pretty: *?[]u8, expr_debruijn: *?[]u8, allocator: std.mem.Allocator) bool {
+    if (rl.isKeyPressed(.escape)) return true;
+    if (rl.isKeyPressed(.space)) state.paused = !state.paused;
+    if (rl.isKeyPressed(.equal) or rl.isKeyPressed(.kp_add)) {
+        if (state.speed_idx < speed_levels.len - 1) state.speed_idx += 1;
+    }
+    if (rl.isKeyPressed(.minus) or rl.isKeyPressed(.kp_subtract)) {
+        if (state.speed_idx > 0) state.speed_idx -= 1;
+    }
+    if (rl.isKeyPressed(.n) and state.paused) {
+        state.requested_steps += 1;
+    }
+    if (rl.isKeyPressed(.r)) resetCamera(sim, state);
+    if (rl.isKeyPressed(.b)) state.show_biomes = !state.show_biomes;
+    if (rl.isKeyPressed(.g)) {
+        state.show_graphs = !state.show_graphs;
+        resetCamera(sim, state);
+    }
+    if (rl.isKeyPressed(.i)) {
+        state.show_inspector = !state.show_inspector;
+        resetCamera(sim, state);
+    }
+
+    const viewport = gridViewport(state.show_inspector, state.show_graphs);
+    const mouse = rl.getMousePosition();
+
+    const wheel = rl.getMouseWheelMove();
+    if (wheel != 0 and pointInViewport(mouse, viewport)) {
+        const world_x = (mouse.x - state.cam_offset_x) / state.cam_scale;
+        const world_y = (mouse.y - state.cam_offset_y) / state.cam_scale;
+        const zoom_factor: f32 = if (wheel > 0) 1.1 else 0.9;
+        state.cam_scale = std.math.clamp(state.cam_scale * zoom_factor, 1.0, 24.0);
+        state.cam_offset_x = mouse.x - world_x * state.cam_scale;
+        state.cam_offset_y = mouse.y - world_y * state.cam_scale;
+    }
+
+    if (rl.isMouseButtonDown(.right) and pointInViewport(mouse, viewport)) {
+        const delta = rl.getMouseDelta();
+        state.cam_offset_x += delta.x;
+        state.cam_offset_y += delta.y;
+    }
+
+    if (rl.isMouseButtonPressed(.left)) {
+        const hud_action = actionForHudClick(mouse, state);
+        if (hud_action != .none) {
+            applyHudAction(hud_action, sim, state, pending_tick, history, expr_pretty, expr_debruijn, allocator);
+            return false;
+        }
+
+        if (cellIndexAtPoint(sim, state, mouse)) |idx| {
+            state.selected_cell = idx;
+            refreshInspectorStrings(sim, idx, expr_pretty, expr_debruijn, allocator);
+        }
+    }
+
+    return false;
+}
+
+fn applyHudAction(action: HudAction, sim: *Simulation, state: *VizState, pending_tick: *PendingTick, history: *MetricHistory, expr_pretty: *?[]u8, expr_debruijn: *?[]u8, allocator: std.mem.Allocator) void {
+    switch (action) {
+        .none => {},
+        .toggle_pause => state.paused = !state.paused,
+        .step_once => {
+            state.requested_steps += 1;
+        },
+        .slower => {
+            if (state.speed_idx > 0) state.speed_idx -= 1;
+        },
+        .faster => {
+            if (state.speed_idx < speed_levels.len - 1) state.speed_idx += 1;
+        },
+        .reset_view => resetCamera(sim, state),
+    }
+    _ = pending_tick;
+    _ = history;
+    _ = expr_pretty;
+    _ = expr_debruijn;
+    _ = allocator;
+}
+
+fn refreshInspectorIfNeeded(sim: *Simulation, state: *VizState, expr_pretty: *?[]u8, expr_debruijn: *?[]u8, allocator: std.mem.Allocator) void {
+    if (!state.paused and state.selected_cell != null) {
+        state.inspector_refresh += 1;
+        if (state.inspector_refresh >= 15) {
+            state.inspector_refresh = 0;
+            refreshInspectorStrings(sim, state.selected_cell.?, expr_pretty, expr_debruijn, allocator);
+        }
+    }
+}
+
+fn refreshSelectedCell(sim: *Simulation, state: *const VizState, expr_pretty: *?[]u8, expr_debruijn: *?[]u8, allocator: std.mem.Allocator) void {
+    if (state.selected_cell) |idx| {
+        refreshInspectorStrings(sim, idx, expr_pretty, expr_debruijn, allocator);
+    }
+}
+
+fn runSimulationFrame(sim: *Simulation, state: *VizState, pending_tick: *PendingTick, history: *MetricHistory, expr_pretty: *?[]u8, expr_debruijn: *?[]u8, allocator: std.mem.Allocator) void {
+    if (state.paused and state.requested_steps == 0 and pending_tick.phase == .idle) return;
+
+    const frame_start = std.time.nanoTimestamp();
+    var completed_ticks: u32 = 0;
+    const target_ticks = if (state.paused) state.requested_steps else speed_levels[state.speed_idx].steps;
+
+    while (completed_ticks < target_ticks or pending_tick.phase != .idle) {
+        const result = advancePendingTick(sim, pending_tick, allocator) catch break;
+        if (result) |step_result| {
+            completed_ticks += 1;
+            finishCompletedTick(sim, state, history, allocator, step_result);
+            refreshSelectedCell(sim, state, expr_pretty, expr_debruijn, allocator);
+
+            if (state.paused and state.requested_steps > 0) {
+                state.requested_steps -= 1;
+                if (state.requested_steps == 0 and pending_tick.phase == .idle) break;
+            }
+        }
+
+        if (std.time.nanoTimestamp() - frame_start > SIM_BUDGET_NS) break;
+    }
+
+    state.steps_this_second += completed_ticks;
+}
+
+fn advancePendingTick(sim: *Simulation, pending_tick: *PendingTick, allocator: std.mem.Allocator) !?@import("simulation.zig").StepResult {
+    const interaction_chunk = 1;
+    const sweep_chunk = 512;
+
+    if (pending_tick.phase == .idle) {
+        sim.grid.injectResources();
+        sim.grid.decayResources();
+        pending_tick.deinit();
+        pending_tick.processor = try TickProcessor.init(&sim.grid);
+        pending_tick.phase = .interacting;
+    }
+
+    switch (pending_tick.phase) {
+        .idle => return null,
+        .interacting => {
+            var processor = &pending_tick.processor.?;
+            if (try processor.advance(interaction_chunk)) {
+                pending_tick.tick_stats = processor.stats;
+                processor.deinit();
+                pending_tick.processor = null;
+                pending_tick.phase = .death_energy;
+                pending_tick.scan_index = 0;
+            }
+            return null;
+        },
+        .death_energy => {
+            const end = @min(sim.grid.cells.len, pending_tick.scan_index + sweep_chunk);
+            while (pending_tick.scan_index < end) : (pending_tick.scan_index += 1) {
+                const cell = &sim.grid.cells[pending_tick.scan_index];
+                switch (cell.*) {
+                    .organism => |*org| {
+                        if (org.energy <= 0) {
+                            org.expr.deinit(allocator);
+                            cell.* = .empty;
+                            pending_tick.deaths_energy += 1;
+                        }
+                    },
+                    else => {},
+                }
+            }
+            if (pending_tick.scan_index >= sim.grid.cells.len) {
+                pending_tick.phase = .death_age;
+                pending_tick.scan_index = 0;
+            }
+            return null;
+        },
+        .death_age => {
+            const end = @min(sim.grid.cells.len, pending_tick.scan_index + sweep_chunk);
+            while (pending_tick.scan_index < end) : (pending_tick.scan_index += 1) {
+                const cell = &sim.grid.cells[pending_tick.scan_index];
+                switch (cell.*) {
+                    .organism => |*org| {
+                        org.age += 1;
+                        if (org.age > sim.config.max_organism_age) {
+                            org.expr.deinit(allocator);
+                            cell.* = .empty;
+                            pending_tick.deaths_age += 1;
+                        }
+                    },
+                    else => {},
+                }
+            }
+            if (pending_tick.scan_index >= sim.grid.cells.len) {
+                sim.tick += 1;
+                const result: @import("simulation.zig").StepResult = .{
+                    .tick_stats = pending_tick.tick_stats,
+                    .deaths_energy = pending_tick.deaths_energy,
+                    .deaths_age = pending_tick.deaths_age,
+                };
+                pending_tick.deinit();
+                return result;
+            }
+            return null;
+        },
+    }
+}
+
+fn finishCompletedTick(sim: *Simulation, state: *VizState, history: *MetricHistory, allocator: std.mem.Allocator, result: @import("simulation.zig").StepResult) void {
+    _ = state;
+    if (result.tick_stats.births > 0) {
+        recordBirthLineages(sim);
+    }
+
+    if (sim.tick % sim.config.log_interval == 0) {
+        var m = metrics.collectTickMetrics(&sim.grid, sim.tick, result.tick_stats, result.deaths_energy, result.deaths_age);
+
+        if (sim.tick % 1000 == 0) {
+            var report = metrics.collectDiversity(&sim.grid, allocator) catch null;
+            if (report) |*r| {
+                m.unique_structures = r.unique_count;
+                r.deinit();
+            }
+        }
+
+        history.push(m);
+        sim.metric_logger.log(m) catch {};
+    }
+}
+
+fn updateStepsPerSecond(state: *VizState) void {
+    const now = std.time.nanoTimestamp();
+    if (now - state.last_sec_time >= 1_000_000_000) {
+        state.steps_per_sec = state.steps_this_second;
+        state.steps_this_second = 0;
+        state.last_sec_time = now;
+    }
+}
+
+fn recordBirthLineages(sim: *Simulation) void {
+    for (sim.grid.cells) |cell| {
+        switch (cell) {
+            .organism => |org| {
+                if (org.age == 0 and org.parent_lineage != null) {
+                    sim.lineage_log.record(
+                        sim.tick,
+                        org.lineage_id,
+                        org.parent_lineage.?,
+                        org.generation,
+                        org.expr.hash(),
+                    ) catch {};
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+fn pointInViewport(point: rl.Vector2, viewport: Viewport) bool {
+    return point.x >= @as(f32, @floatFromInt(viewport.x)) and
+        point.x < @as(f32, @floatFromInt(viewport.x + viewport.w)) and
+        point.y >= @as(f32, @floatFromInt(viewport.y)) and
+        point.y < @as(f32, @floatFromInt(viewport.y + viewport.h));
+}
+
+fn cellIndexAtPoint(sim: *Simulation, state: *const VizState, point: rl.Vector2) ?u32 {
+    const viewport = gridViewport(state.show_inspector, state.show_graphs);
+    if (!pointInViewport(point, viewport)) return null;
+
+    const gx_f = (point.x - state.cam_offset_x) / state.cam_scale;
+    const gy_f = (point.y - state.cam_offset_y) / state.cam_scale;
+    const gx: i32 = @intFromFloat(gx_f);
+    const gy: i32 = @intFromFloat(gy_f);
+    const w: i32 = @intCast(sim.config.width);
+    const h: i32 = @intCast(sim.config.height);
+    if (gx < 0 or gx >= w or gy < 0 or gy >= h) return null;
+    return @intCast(gy * w + gx);
+}
+
+fn hudButtons(paused: bool) [5]HudButton {
+    const y: f32 = 8;
+    const h: f32 = 24;
+    return .{
+        .{ .rect = .{ .x = 960, .y = y, .width = 74, .height = h }, .label = if (paused) "Play" else "Pause", .action = .toggle_pause },
+        .{ .rect = .{ .x = 1042, .y = y, .width = 62, .height = h }, .label = "Step", .action = .step_once },
+        .{ .rect = .{ .x = 1112, .y = y, .width = 28, .height = h }, .label = "-", .action = .slower },
+        .{ .rect = .{ .x = 1148, .y = y, .width = 28, .height = h }, .label = "+", .action = .faster },
+        .{ .rect = .{ .x = 1184, .y = y, .width = 86, .height = h }, .label = "Recenter", .action = .reset_view },
+    };
+}
+
+fn actionForHudClick(mouse: rl.Vector2, state: *const VizState) HudAction {
+    if (mouse.y >= @as(f32, @floatFromInt(HUD_H))) return .none;
+    const buttons = hudButtons(state.paused);
+    for (buttons) |button| {
+        if (rl.checkCollisionPointRec(mouse, button.rect)) return button.action;
+    }
+    return .none;
+}
+
+fn renderGrid(sim: *Simulation, state: *const VizState) void {
+    const w = sim.config.width;
+    const viewport = gridViewport(state.show_inspector, state.show_graphs);
+    rl.beginScissorMode(viewport.x, viewport.y, viewport.w, viewport.h);
     defer rl.endScissorMode();
 
+    rl.drawRectangle(viewport.x, viewport.y, viewport.w, viewport.h, rl.Color.init(10, 12, 16, 255));
+
     // Visible cell range for culling
-    const start_x = @max(0, @as(i32, @intFromFloat(-offset_x / scale)));
-    const start_y = @max(0, @as(i32, @intFromFloat(-offset_y / scale)));
-    const end_x = @min(@as(i32, @intCast(w)), @as(i32, @intFromFloat((@as(f32, @floatFromInt(area_w)) - offset_x) / scale)) + 1);
-    const end_y = @min(@as(i32, @intCast(h)), @as(i32, @intFromFloat((@as(f32, @floatFromInt(area_h)) - offset_y) / scale)) + 1);
+    const start_x = @max(0, @as(i32, @intFromFloat((@as(f32, @floatFromInt(viewport.x)) - state.cam_offset_x) / state.cam_scale)));
+    const start_y = @max(0, @as(i32, @intFromFloat((@as(f32, @floatFromInt(viewport.y)) - state.cam_offset_y) / state.cam_scale)));
+    const end_x = @min(@as(i32, @intCast(w)), @as(i32, @intFromFloat((@as(f32, @floatFromInt(viewport.x + viewport.w)) - state.cam_offset_x) / state.cam_scale)) + 1);
+    const end_y = @min(@as(i32, @intCast(sim.config.height)), @as(i32, @intFromFloat((@as(f32, @floatFromInt(viewport.y + viewport.h)) - state.cam_offset_y) / state.cam_scale)) + 1);
 
     if (start_x >= end_x or start_y >= end_y) return;
 
     // Use ceil so cells slightly overlap — no black gaps between cells
-    const cell_px: i32 = @max(1, @as(i32, @intFromFloat(@ceil(scale))));
+    const cell_px: i32 = @max(1, @as(i32, @intFromFloat(@ceil(state.cam_scale))));
 
     var y: i32 = start_y;
     while (y < end_y) : (y += 1) {
         var x: i32 = start_x;
         while (x < end_x) : (x += 1) {
             const idx: u32 = @intCast(@as(u32, @intCast(y)) * w + @as(u32, @intCast(x)));
-            const px = @as(i32, @intFromFloat(@as(f32, @floatFromInt(x)) * scale + offset_x));
-            const py = @as(i32, @intFromFloat(@as(f32, @floatFromInt(y)) * scale + offset_y));
+            const px = @as(i32, @intFromFloat(@as(f32, @floatFromInt(x)) * state.cam_scale + state.cam_offset_x));
+            const py = @as(i32, @intFromFloat(@as(f32, @floatFromInt(y)) * state.cam_scale + state.cam_offset_y));
 
-            const color = if (show_biomes)
+            const color = if (state.show_biomes)
                 biomeColor(sim.grid.biome_map[idx])
             else
                 cellColor(sim.grid.cells[idx]);
@@ -358,18 +586,23 @@ fn renderGrid(sim: *Simulation, offset_x: f32, offset_y: f32, scale: f32, show_b
     }
 
     // Selection highlight
-    if (selected_cell) |sel| {
+    if (state.selected_cell) |sel| {
         const sx: i32 = @intCast(sel % w);
         const sy: i32 = @intCast(sel / w);
-        const px = @as(i32, @intFromFloat(@as(f32, @floatFromInt(sx)) * scale + offset_x));
-        const py = @as(i32, @intFromFloat(@as(f32, @floatFromInt(sy)) * scale + offset_y));
-        rl.drawRectangleLines(px - 1, py - 1, cell_px + 2, cell_px + 2, rl.Color.white);
+        const px = @as(i32, @intFromFloat(@as(f32, @floatFromInt(sx)) * state.cam_scale + state.cam_offset_x));
+        const py = @as(i32, @intFromFloat(@as(f32, @floatFromInt(sy)) * state.cam_scale + state.cam_offset_y));
+        rl.drawRectangleLinesEx(.{
+            .x = @floatFromInt(px - 2),
+            .y = @floatFromInt(py - 2),
+            .width = @floatFromInt(cell_px + 4),
+            .height = @floatFromInt(cell_px + 4),
+        }, 2, rl.Color.init(255, 250, 210, 255));
     }
 }
 
 fn cellColor(cell: Cell) rl.Color {
     return switch (cell) {
-        .empty => rl.Color.init(12, 12, 16, 255),
+        .empty => rl.Color.init(16, 18, 24, 255),
         .resource => |res| resourceColor(res.kind),
         .organism => |org| organismColor(org),
     };
@@ -388,10 +621,11 @@ fn resourceColor(kind: ResourceKind) rl.Color {
 
 fn organismColor(org: Organism) rl.Color {
     const h = org.expr.hash();
-    // Use golden-angle spacing for better hue distribution
-    const hue: f32 = @mod(@as(f32, @floatFromInt(h % 1000)) * 0.618033988 * 360.0, 360.0);
-    const brightness = std.math.clamp(@as(f32, @floatCast(org.energy)) / 150.0, 0.4, 1.0);
-    return hsvToRgb(hue, 0.85, brightness);
+    const hue: f32 = @mod(@as(f32, @floatFromInt(h % 2048)) * 0.618033988 * 360.0, 360.0);
+    const energy = std.math.clamp(@as(f32, @floatCast(org.energy)) / 120.0, 0.0, 1.0);
+    const value = 0.35 + energy * 0.65;
+    const saturation = 0.45 + @min(0.45, @as(f32, @floatFromInt(org.generation % 10)) * 0.04);
+    return hsvToRgb(hue, saturation, value);
 }
 
 fn biomeColor(biome_id: u8) rl.Color {
@@ -447,13 +681,14 @@ fn hsvToRgb(h: f32, s: f32, v: f32) rl.Color {
 
 fn renderInspector(sim: *Simulation, selected_cell: ?u32, expr_pretty: ?[]u8, expr_debruijn: ?[]u8, show_graphs: bool) void {
     const panel_x: i32 = WINDOW_W - INSPECTOR_W;
-    const panel_h: i32 = if (show_graphs) WINDOW_H - GRAPH_H else WINDOW_H;
+    const panel_y: i32 = HUD_H;
+    const panel_h: i32 = if (show_graphs) WINDOW_H - HUD_H - GRAPH_H else WINDOW_H - HUD_H;
 
     // Background
-    rl.drawRectangle(panel_x, 0, INSPECTOR_W, panel_h, rl.Color.init(28, 28, 33, 255));
-    rl.drawLine(panel_x, 0, panel_x, panel_h, rl.Color.init(60, 60, 70, 255));
+    rl.drawRectangle(panel_x, panel_y, INSPECTOR_W, panel_h, rl.Color.init(28, 28, 33, 255));
+    rl.drawLine(panel_x, panel_y, panel_x, panel_y + panel_h, rl.Color.init(60, 60, 70, 255));
 
-    var y: i32 = 10;
+    var y: i32 = panel_y + 10;
     const x: i32 = panel_x + 10;
     const font_size: i32 = 16;
     const line_h: i32 = 20;
@@ -648,14 +883,14 @@ fn renderGraphs(history: *const MetricHistory, show_inspector: bool) void {
     }
 }
 
-fn renderHUD(sim: *Simulation, paused: bool, speed_idx: usize, steps_per_sec: u32) void {
+fn renderHUD(sim: *Simulation, state: *const VizState) void {
     // Background
     rl.drawRectangle(0, 0, WINDOW_W, HUD_H, rl.Color.init(0, 0, 0, 200));
 
     const counts = sim.grid.countCells();
 
     // Line 1: Status
-    drawTextFmt("Tick: {d}  |  Pop: {d}  Res: {d}  Empty: {d}  |  FPS: {d}", .{
+    drawTextFmt("Tick: {d}  Pop: {d}  Res: {d}  Empty: {d}  FPS: {d}", .{
         sim.tick,
         counts.organisms,
         counts.resources,
@@ -664,12 +899,21 @@ fn renderHUD(sim: *Simulation, paused: bool, speed_idx: usize, steps_per_sec: u3
     }, 8, 4, 16, rl.Color.init(220, 220, 220, 255));
 
     // Line 2: Controls and speed
-    drawTextFmt("Speed: {s}  ({d} steps/s)  |  Space:Pause  +/-:Speed  R:Reset  B:Biomes  G:Graphs  I:Inspector  Esc:Quit", .{
-        speed_levels[speed_idx].label,
-        steps_per_sec,
+    drawTextFmt("Speed: {s}  Effective: {d} ticks/s  Space:Pause  N:Step  +/-:Speed  R:Reset  B/G/I toggles", .{
+        speed_levels[state.speed_idx].label,
+        state.steps_per_sec,
     }, 8, 22, 14, rl.Color.init(140, 140, 160, 255));
 
-    if (paused) {
-        rl.drawText("PAUSED", WINDOW_W - 100, 4, 20, rl.Color.init(255, 80, 80, 255));
+    const buttons = hudButtons(state.paused);
+    for (buttons) |button| {
+        const active = rl.checkCollisionPointRec(rl.getMousePosition(), button.rect);
+        const fill = if (active) rl.Color.init(70, 76, 96, 255) else rl.Color.init(46, 50, 63, 255);
+        rl.drawRectangleRounded(button.rect, 0.22, 6, fill);
+        rl.drawRectangleRoundedLinesEx(button.rect, 0.22, 6, 1.5, rl.Color.init(120, 130, 156, 255));
+        rl.drawText(button.label, @as(i32, @intFromFloat(button.rect.x)) + 8, @as(i32, @intFromFloat(button.rect.y)) + 5, 14, rl.Color.init(235, 235, 245, 255));
+    }
+
+    if (state.paused) {
+        rl.drawText("PAUSED", WINDOW_W - 120, 4, 20, rl.Color.init(255, 80, 80, 255));
     }
 }
