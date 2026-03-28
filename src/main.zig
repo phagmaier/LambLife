@@ -1,6 +1,7 @@
 const std = @import("std");
 const Config = @import("config.zig").Config;
 const Simulation = @import("simulation.zig").Simulation;
+const viz = @import("viz.zig");
 
 fn printUsage() void {
     const usage =
@@ -13,6 +14,7 @@ fn printUsage() void {
         \\  --lineage=FILE      Lineage CSV output path (default: lineage.csv)
         \\  --snapshot-dir=DIR  Directory for snapshots (default: snapshots)
         \\  --resume=FILE       Resume from a snapshot file
+        \\  --viz               Run with real-time visualization (raylib)
         \\  --help              Show this help message
         \\
         \\Config overrides (--name=value):
@@ -35,7 +37,7 @@ fn printUsage() void {
     std.debug.print("\n", .{});
 }
 
-fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, seed: ?u64, ticks: u64, metrics_path: []const u8, lineage_path: []const u8, snapshot_dir: []const u8, resume_path: ?[]const u8 } {
+fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, seed: ?u64, ticks: u64, metrics_path: []const u8, lineage_path: []const u8, snapshot_dir: []const u8, resume_path: ?[]const u8, viz_mode: bool } {
     var config = Config{};
     var seed: ?u64 = null;
     var ticks: u64 = 10_000;
@@ -43,11 +45,17 @@ fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, see
     var lineage_path: []const u8 = "lineage.csv";
     var snapshot_dir: []const u8 = "snapshots";
     var resume_path: ?[]const u8 = null;
+    var viz_mode: bool = false;
 
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             printUsage();
             std.process.exit(0);
+        }
+
+        if (std.mem.eql(u8, arg, "--viz")) {
+            viz_mode = true;
+            continue;
         }
 
         if (!std.mem.startsWith(u8, arg, "--")) continue;
@@ -106,6 +114,7 @@ fn parseConfigFromArgs(args: []const [:0]const u8) !struct { config: Config, see
         .lineage_path = lineage_path,
         .snapshot_dir = snapshot_dir,
         .resume_path = resume_path,
+        .viz_mode = viz_mode,
     };
 }
 
@@ -180,7 +189,12 @@ pub fn main() !void {
     // Re-wire grid rng to point at the now-settled prng
     sim.rewireRng();
     sim.snapshot_dir = parsed.snapshot_dir;
-    try sim.run(parsed.ticks);
+
+    if (parsed.viz_mode) {
+        try viz.runVisualization(&sim, allocator);
+    } else {
+        try sim.run(parsed.ticks);
+    }
 
     sim.lineage_log.writeCsv(parsed.lineage_path) catch |err| {
         std.debug.print("Warning: could not write {s}: {}\n", .{ parsed.lineage_path, err });
@@ -200,4 +214,5 @@ test {
     _ = @import("config.zig");
     _ = @import("metrics.zig");
     _ = @import("snapshot.zig");
+    _ = @import("viz.zig");
 }
