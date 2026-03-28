@@ -88,13 +88,19 @@ fn drawTextFmt(comptime fmt: []const u8, args: anytype, x: i32, y: i32, font_siz
 }
 
 pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
+    // Debug: print grid state before opening window
+    const counts = sim.grid.countCells();
+    std.debug.print("VIZ DEBUG: grid {d}x{d}, organisms={d}, resources={d}, empty={d}\n", .{
+        sim.config.width, sim.config.height, counts.organisms, counts.resources, counts.empty,
+    });
+
     rl.initWindow(WINDOW_W, WINDOW_H, "LambLife - Lambda Calculus Artificial Life");
     defer rl.closeWindow();
     rl.setTargetFPS(60);
 
     var history = MetricHistory.init();
-    var paused = false;
-    var speed_idx: usize = 2; // start at 10x
+    var paused = true; // Start paused so first frame renders immediately
+    var speed_idx: usize = 0; // start at 1x
     var show_graphs = true;
     var show_inspector = true;
     var show_biomes = false;
@@ -185,7 +191,29 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
             }
         }
 
-        // --- Simulation step ---
+        // --- Render ---
+        rl.beginDrawing();
+        rl.clearBackground(rl.Color.init(20, 20, 20, 255));
+
+        // Grid
+        renderGrid(sim, cam_offset_x, cam_offset_y, cam_scale, show_biomes, selected_cell, show_inspector, show_graphs);
+
+        // Inspector panel
+        if (show_inspector) {
+            renderInspector(sim, selected_cell, expr_pretty_buf, expr_debruijn_buf, show_graphs);
+        }
+
+        // Graphs
+        if (show_graphs) {
+            renderGraphs(&history, show_inspector);
+        }
+
+        // HUD
+        renderHUD(sim, paused, speed_idx);
+
+        rl.endDrawing();
+
+        // --- Simulation step (after render so first frame shows immediately) ---
         if (!paused) {
             const steps = speed_levels[speed_idx].steps;
             for (0..steps) |_| {
@@ -226,28 +254,6 @@ pub fn runVisualization(sim: *Simulation, allocator: std.mem.Allocator) !void {
                 }
             }
         }
-
-        // --- Render ---
-        rl.beginDrawing();
-        rl.clearBackground(rl.Color.init(20, 20, 20, 255));
-
-        // Grid
-        renderGrid(sim, cam_offset_x, cam_offset_y, cam_scale, show_biomes, selected_cell, show_inspector, show_graphs);
-
-        // Inspector panel
-        if (show_inspector) {
-            renderInspector(sim, selected_cell, expr_pretty_buf, expr_debruijn_buf, show_graphs);
-        }
-
-        // Graphs
-        if (show_graphs) {
-            renderGraphs(&history, show_inspector);
-        }
-
-        // HUD
-        renderHUD(sim, paused, speed_idx);
-
-        rl.endDrawing();
     }
 }
 
