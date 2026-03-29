@@ -489,6 +489,10 @@ fn advancePendingTick(sim: *Simulation, pending_tick: *PendingTick, allocator: s
                     .resources_injected = pending_tick.resources_injected,
                     .resource_injection_blocked = pending_tick.resource_injection_blocked,
                     .net_energy_delta = totalOrganismEnergy(&sim.grid) - pending_tick.energy_before,
+                    .inject_ns = 0,
+                    .decay_ns = 0,
+                    .interactions_ns = 0,
+                    .death_sweep_ns = 0,
                 };
                 pending_tick.deinit();
                 return result;

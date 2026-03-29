@@ -186,14 +186,14 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
 
     // Build stack application nodes and let reduction copy them into the arena.
     var app_ab = Expr.initArg(org_live_expr, neighbor_expr);
-    const result_ab = try reduce_mod.reduce(&app_ab, config.max_reduction_steps, config.max_expression_size, temp_allocator);
+    const result_ab = try reduce_mod.reduceShared(&app_ab, config.max_reduction_steps, config.max_expression_size, temp_allocator);
     stats.reductions_attempted += 1;
     stats.beta_steps += result_ab.steps;
     if (result_ab.hit_step_limit) stats.step_limit_hits += 1;
     if (result_ab.hit_size_limit) stats.size_limit_hits += 1;
 
     var app_ba = Expr.initArg(neighbor_expr, org_live_expr);
-    const result_ba = try reduce_mod.reduce(&app_ba, config.max_reduction_steps, config.max_expression_size, temp_allocator);
+    const result_ba = try reduce_mod.reduceShared(&app_ba, config.max_reduction_steps, config.max_expression_size, temp_allocator);
     stats.reductions_attempted += 1;
     stats.beta_steps += result_ba.steps;
     if (result_ba.hit_step_limit) stats.step_limit_hits += 1;

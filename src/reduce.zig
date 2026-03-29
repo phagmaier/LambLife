@@ -43,33 +43,32 @@ pub fn shift(expr: *const Expr, amount: i32, cutoff: u32, allocator: std.mem.All
 /// Returns a newly allocated expression tree — caller owns it.
 /// The `replacement` is NOT consumed; it is deep-copied where needed.
 pub fn substitute(expr: *const Expr, target: u32, replacement: *const Expr, allocator: std.mem.Allocator) !*Expr {
+    return substituteAtDepth(expr, target, replacement, 0, allocator);
+}
+
+fn substituteAtDepth(expr: *const Expr, target: u32, replacement: *const Expr, depth: u32, allocator: std.mem.Allocator) !*Expr {
     const result = try allocator.create(Expr);
     errdefer allocator.destroy(result);
 
     result.* = switch (expr.*) {
         .Var => |n| blk: {
-            if (n == target) {
-                // Deep copy the replacement so caller retains ownership of original
-                const copy = try Expr.deepCopy(replacement, allocator);
-                // deepCopy returns a *Expr; we want the value inside it
-                const val = copy.*;
-                allocator.destroy(copy);
+            if (n == target + depth) {
+                const shifted = try shift(replacement, @intCast(depth), 0, allocator);
+                const val = shifted.*;
+                allocator.destroy(shifted);
                 break :blk val;
             } else {
                 break :blk Expr.initVar(n);
             }
         },
         .Lam => |body| blk: {
-            // Under a binder: target index shifts up, replacement needs shifting
-            const shifted_replacement = try shift(replacement, 1, 0, allocator);
-            defer shifted_replacement.deinit(allocator);
-            const new_body = try substitute(body, target + 1, shifted_replacement, allocator);
+            const new_body = try substituteAtDepth(body, target, replacement, depth + 1, allocator);
             break :blk Expr.initLam(new_body);
         },
         .App => |app| blk: {
-            const new_func = try substitute(app.func, target, replacement, allocator);
+            const new_func = try substituteAtDepth(app.func, target, replacement, depth, allocator);
             errdefer new_func.deinit(allocator);
-            const new_arg = try substitute(app.arg, target, replacement, allocator);
+            const new_arg = try substituteAtDepth(app.arg, target, replacement, depth, allocator);
             break :blk Expr.initArg(new_func, new_arg);
         },
     };
@@ -186,6 +185,75 @@ pub fn reduce(expr: *const Expr, max_steps: u32, max_size: u32, allocator: std.m
         .steps = steps_taken,
         .hit_step_limit = steps_taken == max_steps,
     };
+}
+
+/// Reduce using shared untouched subtrees instead of fully-owned copies.
+/// This is intended for short-lived arena-backed evaluation where the result
+/// does not outlive the input expressions and all temporary memory can be
+/// released in bulk.
+pub fn reduceShared(expr: *Expr, max_steps: u32, max_size: u32, allocator: std.mem.Allocator) !ReductionResult {
+    var current = expr;
+    var steps_taken: u32 = 0;
+
+    while (steps_taken < max_steps) {
+        const maybe_next = try reduceOneShared(current, allocator);
+
+        if (maybe_next) |next| {
+            const next_size = next.size();
+            if (next_size > max_size) {
+                return .{
+                    .expr = current,
+                    .steps = steps_taken,
+                    .hit_size_limit = true,
+                };
+            }
+
+            current = next;
+            steps_taken += 1;
+        } else {
+            break;
+        }
+    }
+
+    return .{
+        .expr = current,
+        .steps = steps_taken,
+        .hit_step_limit = steps_taken == max_steps,
+    };
+}
+
+fn reduceOneShared(expr: *const Expr, allocator: std.mem.Allocator) !?*Expr {
+    switch (expr.*) {
+        .App => |app| {
+            if (app.func.* == .Lam) {
+                const body = app.func.*.Lam;
+                return try betaStep(body, app.arg, allocator);
+            }
+
+            if (try reduceOneShared(app.func, allocator)) |reduced_func| {
+                const result = try allocator.create(Expr);
+                result.* = Expr.initArg(reduced_func, app.arg);
+                return result;
+            }
+
+            if (try reduceOneShared(app.arg, allocator)) |reduced_arg| {
+                const result = try allocator.create(Expr);
+                result.* = Expr.initArg(app.func, reduced_arg);
+                return result;
+            }
+
+            return null;
+        },
+        .Lam => |body| {
+            if (try reduceOneShared(body, allocator)) |reduced_body| {
+                const result = try allocator.create(Expr);
+                result.* = Expr.initLam(reduced_body);
+                return result;
+            }
+            return null;
+        },
+        .Var => return null,
+    }
 }
 
 // ============================================================
