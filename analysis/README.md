@@ -44,6 +44,20 @@ python3 -m analysis.run_batch \
   --ticks 100000
 ```
 
+By default this uses:
+
+```bash
+zig build -Doptimize=ReleaseFast run --
+```
+
+so experiment batches run with the fast optimized build unless you override `--command`.
+
+If you want to see simulator progress in the terminal while still saving `run.log`, add:
+
+```bash
+--stream
+```
+
 You can pass simulator config overrides with repeated `--extra-arg`:
 
 ```bash

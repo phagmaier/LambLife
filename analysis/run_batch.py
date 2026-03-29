@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -14,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--command",
         nargs="+",
-        default=["zig", "build", "run", "--"],
+        default=["zig", "build", "-Doptimize=ReleaseFast", "run", "--"],
         help="Command prefix used to launch the simulator before LambLife arguments are appended",
     )
     parser.add_argument(
@@ -22,6 +23,11 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="Extra simulator argument like --width=100. May be repeated.",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Mirror each run's output to stdout while still writing run.log",
     )
     return parser.parse_args()
 
@@ -55,9 +61,26 @@ def main() -> int:
         print(f"[run_batch] seed={seed} -> {run_dir}")
         command_path.write_text(" ".join(str(part) for part in cmd) + "\n", encoding="utf-8")
         with log_path.open("w", encoding="utf-8") as log_handle:
-            result = subprocess.run(cmd, stdout=log_handle, stderr=subprocess.STDOUT, text=True)
-        if result.returncode != 0:
-            raise SystemExit(f"[run_batch] seed={seed} failed with exit code {result.returncode}. See {log_path}")
+            if args.stream:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                assert process.stdout is not None
+                for line in process.stdout:
+                    log_handle.write(line)
+                    log_handle.flush()
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                result_code = process.wait()
+            else:
+                result = subprocess.run(cmd, stdout=log_handle, stderr=subprocess.STDOUT, text=True)
+                result_code = result.returncode
+        if result_code != 0:
+            raise SystemExit(f"[run_batch] seed={seed} failed with exit code {result_code}. See {log_path}")
         manifest.append(
             {
                 "seed": seed,

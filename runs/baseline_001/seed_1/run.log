@@ -1,0 +1,35 @@
+run
++- run exe LambLife
+   +- compile exe LambLife ReleaseFast native failure
+error: warning(link): unexpected LLD stderr:
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libGLX.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libX11.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXcursor.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXext.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXfixes.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXi.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXinerama.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXrandr.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXrender.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libX11.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libGLX.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libX11.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXcursor.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXext.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXfixes.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXi.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXinerama.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXrandr.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libXrender.so' is neither ET_REL nor LLVM bitcode
+ld.lld: warning: .zig-cache/o/f8fb84cdb46f8e7710bd352fd2c0a012/libraylib.a: archive member '/lib64/libX11.so' is neither ET_REL nor LLVM bitcode
+
+
+LambLife starting: 150x150 grid, seed=1, ticks=100000
+tick=100 pop=22499 res=0 empty=1 births=0 deaths_e=1 deaths_a=0 interactions=22498 consumed=0 novel=2 energy=3370.6/99169.8 size=12.8/502 age=97.7/100 gen=5
+tick=200 pop=22499 res=0 empty=1 births=0 deaths_e=1 deaths_a=0 interactions=22499 consumed=0 novel=1 energy=6848.8/198195.8 size=12.8/500 age=197.4/200 gen=5
+tick=300 pop=22500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=22499 consumed=0 novel=1 energy=10346.9/309495.9 size=12.8/500 age=297.3/300 gen=5
+tick=400 pop=22500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=22500 consumed=0 novel=0 energy=13849.0/423858.0 size=12.7/500 age=397.2/400 gen=5
+tick=500 pop=22500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=22500 consumed=0 novel=0 energy=17354.3/533248.1 size=12.7/500 age=497.0/500 gen=5
+tick=600 pop=22500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=22500 consumed=0 novel=0 energy=20857.8/634306.9 size=12.7/500 age=596.9/600 gen=5
+tick=700 pop=22500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=22500 consumed=0 novel=0 energy=24373.4/732216.9 size=12.7/500 age=696.9/700 gen=5
+tick=800 pop=22500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=22500 consumed=0 novel=0 energy=27881.8/844581.3 size=12.7/500 age=796.8/800 gen=5

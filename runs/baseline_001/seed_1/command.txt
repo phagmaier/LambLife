@@ -1,0 +1,1 @@
+zig build -Doptimize=ReleaseFast run -- --seed=1 --ticks=100000 --metrics=runs/baseline_001/seed_1/metrics.csv --lineage=runs/baseline_001/seed_1/lineage.csv --snapshot-dir=runs/baseline_001/seed_1/snapshots

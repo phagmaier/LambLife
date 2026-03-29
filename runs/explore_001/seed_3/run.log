@@ -1,0 +1,31 @@
+LambLife starting: 50x50 grid, seed=3, ticks=10000
+tick=100 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=4073.7/57409.4 size=18.4/500 age=96.7/100 gen=3
+tick=200 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2499 consumed=0 novel=1 energy=8502.8/122803.8 size=18.3/500 age=196.2/200 gen=3
+tick=300 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=12929.9/206952.8 size=18.3/500 age=296.0/300 gen=3
+tick=400 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=17366.3/263817.5 size=18.3/500 age=396.0/400 gen=3
+tick=500 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=21794.4/317275.3 size=18.3/500 age=496.0/500 gen=3
+tick=600 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=26245.9/394860.3 size=18.3/500 age=595.3/600 gen=3
+tick=700 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=30686.4/463681.3 size=18.3/500 age=695.1/700 gen=3
+tick=800 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=35157.6/529072.8 size=18.3/500 age=795.1/800 gen=3
+tick=900 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=39647.9/596077.2 size=18.3/500 age=895.1/900 gen=3
+=== Diversity @ tick 1000: 553 unique species ===
+  #1: hash=778c93a8b040cf3f pop=599 avg_energy=15587.1 center=(26,25)
+  #2: hash=40c0c668478ecf90 pop=403 avg_energy=45692.4 center=(25,24)
+  #3: hash=82b3dcb707aae47f pop=136 avg_energy=12785.3 center=(27,23)
+  #4: hash=bcd21b07e6f7e5b9 pop=110 avg_energy=48471.8 center=(25,23)
+  #5: hash=da929c66eb3e88c1 pop=95 avg_energy=59242.1 center=(25,25)
+  #6: hash=d00900ec926a0a46 pop=54 avg_energy=68414.1 center=(24,20)
+  #7: hash=4d3be084d3467d01 pop=53 avg_energy=17203.2 center=(24,22)
+  #8: hash=c8ebdfc8786d6db9 pop=44 avg_energy=50053.5 center=(21,28)
+  #9: hash=cb3976286ea16de4 pop=27 avg_energy=22266.0 center=(22,26)
+  #10: hash=2c0252c55f91c01e pop=25 avg_energy=20674.5 center=(25,21)
+tick=1000 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=44099.4/666571.4 size=18.3/500 age=995.1/1000 gen=3
+tick=1100 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=48562.9/723347.8 size=18.3/500 age=1095.1/1100 gen=3
+tick=1200 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=53032.8/800614.8 size=18.3/500 age=1195.1/1200 gen=3
+tick=1300 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=57469.1/850916.0 size=18.3/500 age=1295.1/1300 gen=3
+tick=1400 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=61946.8/907769.2 size=18.3/500 age=1395.1/1400 gen=3
+tick=1500 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=66404.1/974916.2 size=18.3/500 age=1495.1/1500 gen=3
+tick=1600 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=70871.9/1035425.3 size=18.3/500 age=1595.1/1600 gen=3
+tick=1700 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=75344.0/1095799.4 size=18.3/500 age=1695.1/1700 gen=3
+tick=1800 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=79819.3/1156148.0 size=18.3/500 age=1794.4/1800 gen=3
+tick=1900 pop=2500 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=2500 consumed=0 novel=0 energy=84260.3/1233501.8 size=18.3/500 age=1894.4/1900 gen=3
