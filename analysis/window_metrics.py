@@ -42,12 +42,20 @@ def compute_windows(rows: list[MetricRow], window_ticks: int) -> list[WindowSumm
     if not rows:
         return []
 
+    width = max(window_ticks, 1)
     windows: list[WindowSummary] = []
-    for idx, start_tick in enumerate(_window_bounds(rows, window_ticks)):
-        end_tick = start_tick + window_ticks
-        bucket = [row for row in rows if start_tick <= row.tick < end_tick]
-        if not bucket:
+    row_idx = 0
+
+    for idx, start_tick in enumerate(_window_bounds(rows, width)):
+        end_tick = start_tick + width
+        bucket_start = row_idx
+        while row_idx < len(rows) and rows[row_idx].tick < end_tick:
+            row_idx += 1
+
+        if bucket_start == row_idx:
             continue
+
+        bucket = rows[bucket_start:row_idx]
 
         windows.append(
             WindowSummary(
@@ -75,4 +83,3 @@ def compute_windows(rows: list[MetricRow], window_ticks: int) -> list[WindowSumm
         )
 
     return windows
-

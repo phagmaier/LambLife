@@ -509,7 +509,7 @@ test "resource injection only fills empty cells" {
     defer grid.deinit();
 
     const before = grid.countCells();
-    grid.injectResources();
+    _ = grid.injectResources();
     const after = grid.countCells();
 
     // Organisms should not have changed

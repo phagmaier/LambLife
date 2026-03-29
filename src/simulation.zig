@@ -15,6 +15,10 @@ pub const StepResult = struct {
     resources_injected: u32,
     resource_injection_blocked: u32,
     net_energy_delta: f64,
+    inject_ns: u64,
+    decay_ns: u64,
+    interactions_ns: u64,
+    death_sweep_ns: u64,
 };
 
 pub const Simulation = struct {
@@ -69,15 +73,21 @@ pub const Simulation = struct {
         const energy_before = totalOrganismEnergy(&self.grid);
 
         // 1. Inject resources
+        const inject_start = std.time.nanoTimestamp();
         const injection_stats = self.grid.injectResources();
+        const inject_ns = durationNsSince(inject_start);
 
         // 2. Decay resources
+        const decay_start = std.time.nanoTimestamp();
         self.grid.decayResources();
+        const decay_ns = durationNsSince(decay_start);
 
         // 3. Organism interactions
+        const interactions_start = std.time.nanoTimestamp();
         var birth_recorder = interaction.BirthRecorder.init(self.allocator);
         defer birth_recorder.deinit();
         const tick_stats = try interaction.processTick(&self.grid, &birth_recorder);
+        const interactions_ns = durationNsSince(interactions_start);
 
         for (birth_recorder.records.items) |rec| {
             try self.lineage_log.record(
@@ -91,6 +101,7 @@ pub const Simulation = struct {
         }
 
         // 4. Death sweep
+        const death_sweep_start = std.time.nanoTimestamp();
         var deaths_energy: u32 = 0;
         var deaths_age: u32 = 0;
         for (self.grid.cells) |*cell| {
@@ -105,6 +116,7 @@ pub const Simulation = struct {
                 else => {},
             }
         }
+        const death_sweep_ns = durationNsSince(death_sweep_start);
 
         // 5. Age increment + age death
         for (self.grid.cells) |*cell| {
@@ -138,6 +150,10 @@ pub const Simulation = struct {
             .resources_injected = injection_stats.injected,
             .resource_injection_blocked = injection_stats.blocked,
             .net_energy_delta = net_energy_delta,
+            .inject_ns = inject_ns,
+            .decay_ns = decay_ns,
+            .interactions_ns = interactions_ns,
+            .death_sweep_ns = death_sweep_ns,
         };
     }
 
@@ -147,8 +163,11 @@ pub const Simulation = struct {
 
         for (0..num_ticks) |_| {
             const result = try self.step();
+            var metrics_ns: u64 = 0;
+            var snapshot_ns: u64 = 0;
 
             if (self.tick % self.config.log_interval == 0) {
+                const metrics_start = std.time.nanoTimestamp();
                 var m = metrics.collectTickMetrics(
                     &self.grid,
                     self.tick,
@@ -172,15 +191,19 @@ pub const Simulation = struct {
 
                 metrics.printTickMetrics(m);
                 try self.metric_logger.log(m);
+                metrics_ns = durationNsSince(metrics_start);
+                printProfiling(self.tick, result, metrics_ns, snapshot_ns);
             }
 
             // Save snapshot at configured interval
             if (self.snapshot_dir != null and self.config.snapshot_interval > 0 and self.tick % self.config.snapshot_interval == 0) {
+                const snapshot_start = std.time.nanoTimestamp();
                 const path = try snapshot.snapshotPath(self.allocator, self.snapshot_dir.?, self.tick);
                 defer self.allocator.free(path);
                 snapshot.save(self, path) catch |err| {
                     std.debug.print("Warning: snapshot save failed at tick {d}: {}\n", .{ self.tick, err });
                 };
+                snapshot_ns = durationNsSince(snapshot_start);
                 std.debug.print("Snapshot saved: {s}\n", .{path});
             }
         }
@@ -196,6 +219,36 @@ fn totalOrganismEnergy(grid: *const Grid) f64 {
         }
     }
     return total;
+}
+
+fn durationNsSince(start_ns: i128) u64 {
+    const elapsed = std.time.nanoTimestamp() - start_ns;
+    return @intCast(@max(elapsed, 0));
+}
+
+fn nsToMs(ns: u64) f64 {
+    return @as(f64, @floatFromInt(ns)) / 1_000_000.0;
+}
+
+fn printProfiling(tick: u64, result: StepResult, metrics_ns: u64, snapshot_ns: u64) void {
+    std.debug.print(
+        "profile tick={d} orgs={d} reductions={d} beta_steps={d} size_hits={d} step_hits={d} " ++
+            "t_inject={d:.2}ms t_decay={d:.2}ms t_interact={d:.2}ms t_death={d:.2}ms t_metrics={d:.2}ms t_snapshot={d:.2}ms\n",
+        .{
+            tick,
+            result.tick_stats.organisms_processed,
+            result.tick_stats.reductions_attempted,
+            result.tick_stats.beta_steps,
+            result.tick_stats.size_limit_hits,
+            result.tick_stats.step_limit_hits,
+            nsToMs(result.inject_ns),
+            nsToMs(result.decay_ns),
+            nsToMs(result.interactions_ns),
+            nsToMs(result.death_sweep_ns),
+            nsToMs(metrics_ns),
+            nsToMs(snapshot_ns),
+        },
+    );
 }
 
 // ============================================================

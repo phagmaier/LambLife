@@ -4,6 +4,8 @@ const Expr = @import("expr.zig").Expr;
 pub const ReductionResult = struct {
     expr: *Expr,
     steps: u32,
+    hit_size_limit: bool = false,
+    hit_step_limit: bool = false,
 };
 
 /// Shift all free variables in `expr` by `amount`.
@@ -166,7 +168,7 @@ pub fn reduce(expr: *const Expr, max_steps: u32, max_size: u32, allocator: std.m
             if (next_size > max_size) {
                 // Size limit hit — discard the new expression, return current
                 next.deinit(allocator);
-                return .{ .expr = current, .steps = steps_taken };
+                return .{ .expr = current, .steps = steps_taken, .hit_size_limit = true };
             }
 
             // Accept the reduction
@@ -179,7 +181,11 @@ pub fn reduce(expr: *const Expr, max_steps: u32, max_size: u32, allocator: std.m
         }
     }
 
-    return .{ .expr = current, .steps = steps_taken };
+    return .{
+        .expr = current,
+        .steps = steps_taken,
+        .hit_step_limit = steps_taken == max_steps,
+    };
 }
 
 // ============================================================

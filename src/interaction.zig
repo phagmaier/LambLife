@@ -16,6 +16,11 @@ pub const TickStats = struct {
     births: u32 = 0,
     novel_placements: u32 = 0,
     resources_consumed: u32 = 0,
+    organisms_processed: u32 = 0,
+    reductions_attempted: u32 = 0,
+    beta_steps: u64 = 0,
+    size_limit_hits: u32 = 0,
+    step_limit_hits: u32 = 0,
 };
 
 pub const BirthKind = enum {
@@ -147,6 +152,7 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
 
     // Guard: cell must still be an organism
     if (grid.cells[org_idx] != .organism) return;
+    stats.organisms_processed += 1;
 
     // Apply maintenance cost
     {
@@ -188,6 +194,10 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
 
     const result_ab = try reduce_mod.reduce(app_ab, config.max_reduction_steps, config.max_expression_size, grid.allocator);
     defer result_ab.expr.deinit(grid.allocator);
+    stats.reductions_attempted += 1;
+    stats.beta_steps += result_ab.steps;
+    if (result_ab.hit_step_limit) stats.step_limit_hits += 1;
+    if (result_ab.hit_size_limit) stats.size_limit_hits += 1;
 
     // Deep-copy organism expression for building App(B, A)
     const org_expr_2 = try Expr.deepCopy(grid.cells[org_idx].organism.expr, grid.allocator);
@@ -204,6 +214,10 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
 
     const result_ba = try reduce_mod.reduce(app_ba, config.max_reduction_steps, config.max_expression_size, grid.allocator);
     defer result_ba.expr.deinit(grid.allocator);
+    stats.reductions_attempted += 1;
+    stats.beta_steps += result_ba.steps;
+    if (result_ba.hit_step_limit) stats.step_limit_hits += 1;
+    if (result_ba.hit_size_limit) stats.size_limit_hits += 1;
 
     // Deduct interaction and reduction costs from organism A
     grid.cells[org_idx].organism.energy -= config.interaction_base_cost;
@@ -665,7 +679,9 @@ test "processOrganism — maintenance cost deducted" {
 
     const energy_before = grid.cells[org_idx].organism.energy;
     var stats = TickStats{};
-    try processOrganism(&grid, org_idx, &stats);
+    var birth_recorder = BirthRecorder.init(allocator);
+    defer birth_recorder.deinit();
+    try processOrganism(&grid, &birth_recorder, org_idx, &stats);
 
     // Should have paid maintenance but no interaction
     try std.testing.expect(grid.cells[org_idx].organism.energy < energy_before);
@@ -704,7 +720,9 @@ test "processOrganism — interaction with resource deducts costs" {
     grid.cells[org_idx].organism.energy = 1000.0;
     const energy_before: f64 = 1000.0;
     var stats = TickStats{};
-    try processOrganism(&grid, org_idx, &stats);
+    var birth_recorder = BirthRecorder.init(allocator);
+    defer birth_recorder.deinit();
+    try processOrganism(&grid, &birth_recorder, org_idx, &stats);
 
     // Should have interacted
     try std.testing.expectEqual(@as(u32, 1), stats.interactions);
@@ -741,7 +759,9 @@ test "tryReproduce — child gets correct lineage and energy" {
 
         // Use the parent's own expression as the "child expression"
         var stats = TickStats{};
-        const success = tryReproduce(&grid, oi, grid.cells[oi].organism.expr, &stats);
+        var birth_recorder = BirthRecorder.init(allocator);
+        defer birth_recorder.deinit();
+        const success = tryReproduce(&grid, &birth_recorder, oi, grid.cells[oi].organism.expr, &stats);
 
         if (success) {
             try std.testing.expectEqual(@as(u32, 1), stats.births);

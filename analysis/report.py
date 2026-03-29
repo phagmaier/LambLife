@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import fmean
@@ -38,6 +40,18 @@ def clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
+def first_index_at_or_after(items: list, threshold: int, attr: str) -> int:
+    lo = 0
+    hi = len(items)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if getattr(items[mid], attr) < threshold:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
 def assess_run(run: RunData, *, window_ticks: int, late_fraction: float) -> RunAssessment:
     metrics = run.metrics
     lineage_rows = run.lineage
@@ -60,8 +74,10 @@ def assess_run(run: RunData, *, window_ticks: int, late_fraction: float) -> RunA
 
     last_tick = metrics[-1].tick
     late_start_tick = int(last_tick * (1.0 - late_fraction))
-    late_metrics = [row for row in metrics if row.tick >= late_start_tick]
-    late_windows = [window for window in windows if window.start_tick >= late_start_tick]
+    late_metrics = metrics[first_index_at_or_after(metrics, late_start_tick, "tick") :]
+
+    late_window_idx = first_index_at_or_after(windows, late_start_tick, "start_tick") if windows else 0
+    late_windows = windows[late_window_idx:]
     final_window = late_windows[-1] if late_windows else (windows[-1] if windows else None)
 
     final_population = metrics[-1].population
@@ -208,19 +224,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json-output", type=Path, help="Write machine-readable JSON summary to this path")
     parser.add_argument("--metrics-name", default="metrics.csv", help="Metrics filename to discover")
     parser.add_argument("--lineage-name", default="lineage.csv", help="Lineage filename to discover")
+    parser.add_argument("--summary-only", action="store_true", help="Skip Markdown report generation and print only batch summary")
+    parser.add_argument("--profile", action="store_true", help="Print analysis stage timings to stderr")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    start_time = time.perf_counter()
+
     runs = require_runs(args.input, metrics_name=args.metrics_name, lineage_name=args.lineage_name)
+    load_done = time.perf_counter()
+
     assessments = [assess_run(run, window_ticks=args.window, late_fraction=args.late_fraction) for run in runs]
+    assess_done = time.perf_counter()
     batch_summary = summarize_batch(assessments)
 
-    markdown = format_markdown(assessments, batch_summary, window_ticks=args.window, late_fraction=args.late_fraction)
-    print(markdown, end="")
+    if args.summary_only:
+        print(json.dumps(batch_summary, indent=2))
+    else:
+        markdown = format_markdown(assessments, batch_summary, window_ticks=args.window, late_fraction=args.late_fraction)
+        print(markdown, end="")
 
-    if args.output:
+    render_done = time.perf_counter()
+
+    if args.output and not args.summary_only:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(markdown, encoding="utf-8")
 
@@ -232,9 +260,20 @@ def main() -> int:
         args.json_output.parent.mkdir(parents=True, exist_ok=True)
         args.json_output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    end_time = time.perf_counter()
+    if args.profile:
+        print(
+            "analysis_profile "
+            f"discover_load={load_done - start_time:.3f}s "
+            f"assess={assess_done - load_done:.3f}s "
+            f"render={render_done - assess_done:.3f}s "
+            f"write={end_time - render_done:.3f}s "
+            f"total={end_time - start_time:.3f}s",
+            file=sys.stderr,
+        )
+
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
