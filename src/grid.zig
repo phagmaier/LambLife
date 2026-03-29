@@ -19,6 +19,12 @@ pub const Resource = struct {
     age: u16,
 };
 
+pub const ResourceInjectionStats = struct {
+    attempts: u32 = 0,
+    injected: u32 = 0,
+    blocked: u32 = 0,
+};
+
 pub const Organism = struct {
     expr: *Expr,
     energy: f64,
@@ -352,9 +358,10 @@ pub const Grid = struct {
         return @enumFromInt(ResourceKind.COUNT - 1);
     }
 
-    pub fn injectResources(self: *Grid) void {
+    pub fn injectResources(self: *Grid) ResourceInjectionStats {
         const grid_size = self.config.gridSize();
         const num_to_inject: u32 = @intFromFloat(@as(f32, @floatFromInt(grid_size)) * self.config.resource_injection_rate);
+        var stats: ResourceInjectionStats = .{ .attempts = num_to_inject };
 
         for (0..num_to_inject) |_| {
             const idx = self.rng.intRangeAtMost(u32, 0, grid_size - 1);
@@ -364,8 +371,12 @@ pub const Grid = struct {
                     .kind = kind,
                     .age = 0,
                 } };
+                stats.injected += 1;
+            } else {
+                stats.blocked += 1;
             }
         }
+        return stats;
     }
 
     pub fn decayResources(self: *Grid) void {

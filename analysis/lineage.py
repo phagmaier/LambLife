@@ -43,10 +43,14 @@ def summarize_lineage(rows: list[LineageRow]) -> LineageSummary:
     children_by_parent: dict[int, list[int]] = defaultdict(list)
     all_children: set[int] = set()
     productive: set[int] = set()
+    root_lineages: set[int] = set()
 
     for row in rows:
-        children_by_parent[row.parent_lineage].append(row.child_lineage)
         all_children.add(row.child_lineage)
+        if row.parent_lineage is None:
+            root_lineages.add(row.child_lineage)
+            continue
+        children_by_parent[row.parent_lineage].append(row.child_lineage)
         productive.add(row.parent_lineage)
 
     return LineageSummary(
@@ -54,7 +58,7 @@ def summarize_lineage(rows: list[LineageRow]) -> LineageSummary:
         unique_lineages=len(all_children),
         unique_expr_hashes=len({row.expr_hash for row in rows}),
         max_generation=max(row.generation for row in rows),
-        roots_with_descendants=len({row.parent_lineage for row in rows if row.parent_lineage not in all_children}),
+        roots_with_descendants=len(root_lineages | {row.parent_lineage for row in rows if row.parent_lineage is not None and row.parent_lineage not in all_children}),
         branching_parents=sum(1 for children in children_by_parent.values() if len(children) > 1),
         productive_lineages=len(productive),
     )
@@ -74,9 +78,11 @@ def summarize_late_lineages(rows: list[LineageRow], start_tick: int) -> LateLine
         )
 
     late_child_ids = {row.child_lineage for row in late_rows}
-    productive_late_lineages = {row.parent_lineage for row in late_rows if row.parent_lineage in late_child_ids}
+    productive_late_lineages = {row.parent_lineage for row in late_rows if row.parent_lineage is not None and row.parent_lineage in late_child_ids}
     children_by_parent: dict[int, list[int]] = defaultdict(list)
     for row in late_rows:
+        if row.parent_lineage is None:
+            continue
         children_by_parent[row.parent_lineage].append(row.child_lineage)
 
     return LateLineageSummary(
@@ -88,4 +94,3 @@ def summarize_late_lineages(rows: list[LineageRow], start_tick: int) -> LateLine
         branching_parents=sum(1 for children in children_by_parent.values() if len(children) > 1),
         fraction_productive=len(productive_late_lineages) / len(late_child_ids) if late_child_ids else 0.0,
     )
-

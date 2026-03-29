@@ -11,6 +11,10 @@ pub const StepResult = struct {
     tick_stats: TickStats,
     deaths_energy: u32,
     deaths_age: u32,
+    resource_injection_attempts: u32,
+    resources_injected: u32,
+    resource_injection_blocked: u32,
+    net_energy_delta: f64,
 };
 
 pub const Simulation = struct {
@@ -22,6 +26,7 @@ pub const Simulation = struct {
     metric_logger: metrics.MetricLogger,
     lineage_log: metrics.LineageLog,
     snapshot_dir: ?[]const u8,
+    cumulative_stats: metrics.CumulativeStats,
 
     pub fn init(allocator: std.mem.Allocator, config: Config, seed: u64, csv_path: ?[]const u8) !Simulation {
         var sim = Simulation{
@@ -33,6 +38,7 @@ pub const Simulation = struct {
             .metric_logger = try metrics.MetricLogger.init(csv_path),
             .lineage_log = metrics.LineageLog.init(allocator),
             .snapshot_dir = null,
+            .cumulative_stats = .{},
         };
         sim.grid = try Grid.init(allocator, sim.prng.random(), seed, config);
         return sim;
@@ -59,14 +65,30 @@ pub const Simulation = struct {
 
     /// Run one simulation tick: inject -> decay -> interact -> death sweep -> age increment.
     pub fn step(self: *Simulation) !StepResult {
+        const tick_number = self.tick + 1;
+        const energy_before = totalOrganismEnergy(&self.grid);
+
         // 1. Inject resources
-        self.grid.injectResources();
+        const injection_stats = self.grid.injectResources();
 
         // 2. Decay resources
         self.grid.decayResources();
 
         // 3. Organism interactions
-        const tick_stats = try interaction.processTick(&self.grid);
+        var birth_recorder = interaction.BirthRecorder.init(self.allocator);
+        defer birth_recorder.deinit();
+        const tick_stats = try interaction.processTick(&self.grid, &birth_recorder);
+
+        for (birth_recorder.records.items) |rec| {
+            try self.lineage_log.record(
+                tick_number,
+                rec.child_lineage,
+                rec.parent_lineage,
+                rec.generation,
+                rec.expr_hash,
+                @tagName(rec.kind),
+            );
+        }
 
         // 4. Death sweep
         var deaths_energy: u32 = 0;
@@ -100,11 +122,22 @@ pub const Simulation = struct {
         }
 
         self.tick += 1;
+        self.cumulative_stats.births += tick_stats.births;
+        self.cumulative_stats.novel_placements += tick_stats.novel_placements;
+        self.cumulative_stats.deaths_energy += deaths_energy;
+        self.cumulative_stats.deaths_age += deaths_age;
+        self.cumulative_stats.resources_consumed += tick_stats.resources_consumed;
+        self.cumulative_stats.interactions += tick_stats.interactions;
+        const net_energy_delta = totalOrganismEnergy(&self.grid) - energy_before;
 
         return .{
             .tick_stats = tick_stats,
             .deaths_energy = deaths_energy,
             .deaths_age = deaths_age,
+            .resource_injection_attempts = injection_stats.attempts,
+            .resources_injected = injection_stats.injected,
+            .resource_injection_blocked = injection_stats.blocked,
+            .net_energy_delta = net_energy_delta,
         };
     }
 
@@ -115,27 +148,19 @@ pub const Simulation = struct {
         for (0..num_ticks) |_| {
             const result = try self.step();
 
-            // Record lineage for births that happened this tick
-            // (scan for organisms born this tick = age 0 with a parent)
-            for (self.grid.cells) |cell| {
-                switch (cell) {
-                    .organism => |org| {
-                        if (org.age == 0 and org.parent_lineage != null) {
-                            try self.lineage_log.record(
-                                self.tick,
-                                org.lineage_id,
-                                org.parent_lineage.?,
-                                org.generation,
-                                org.expr.hash(),
-                            );
-                        }
-                    },
-                    else => {},
-                }
-            }
-
             if (self.tick % self.config.log_interval == 0) {
-                var m = metrics.collectTickMetrics(&self.grid, self.tick, result.tick_stats, result.deaths_energy, result.deaths_age);
+                var m = metrics.collectTickMetrics(
+                    &self.grid,
+                    self.tick,
+                    result.tick_stats,
+                    result.deaths_energy,
+                    result.deaths_age,
+                    result.resource_injection_attempts,
+                    result.resources_injected,
+                    result.resource_injection_blocked,
+                    self.cumulative_stats,
+                    result.net_energy_delta,
+                );
 
                 // Attach unique structure count from diversity if at diversity interval
                 if (self.tick % diversity_interval == 0) {
@@ -161,6 +186,17 @@ pub const Simulation = struct {
         }
     }
 };
+
+fn totalOrganismEnergy(grid: *const Grid) f64 {
+    var total: f64 = 0;
+    for (grid.cells) |cell| {
+        switch (cell) {
+            .organism => |org| total += org.energy,
+            else => {},
+        }
+    }
+    return total;
+}
 
 // ============================================================
 // Tests

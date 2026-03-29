@@ -9,6 +9,7 @@ const Organism = grid_mod.Organism;
 const metrics = @import("metrics.zig");
 const TickMetrics = metrics.TickMetrics;
 const interaction = @import("interaction.zig");
+const BirthRecorder = interaction.BirthRecorder;
 const TickProcessor = interaction.TickProcessor;
 const TickStats = interaction.TickStats;
 const Expr = @import("expr.zig").Expr;
@@ -132,21 +133,35 @@ const PendingTickPhase = enum {
 const PendingTick = struct {
     phase: PendingTickPhase = .idle,
     processor: ?TickProcessor = null,
+    birth_recorder: BirthRecorder = undefined,
+    has_birth_recorder: bool = false,
     scan_index: usize = 0,
     tick_stats: TickStats = .{},
     deaths_energy: u32 = 0,
     deaths_age: u32 = 0,
+    resource_injection_attempts: u32 = 0,
+    resources_injected: u32 = 0,
+    resource_injection_blocked: u32 = 0,
+    energy_before: f64 = 0,
 
     fn deinit(self: *PendingTick) void {
         if (self.processor) |*processor| {
             processor.deinit();
             self.processor = null;
         }
+        if (self.has_birth_recorder) {
+            self.birth_recorder.deinit();
+            self.has_birth_recorder = false;
+        }
         self.phase = .idle;
         self.scan_index = 0;
         self.tick_stats = .{};
         self.deaths_energy = 0;
         self.deaths_age = 0;
+        self.resource_injection_attempts = 0;
+        self.resources_injected = 0;
+        self.resource_injection_blocked = 0;
+        self.energy_before = 0;
     }
 };
 
@@ -385,10 +400,16 @@ fn advancePendingTick(sim: *Simulation, pending_tick: *PendingTick, allocator: s
     const sweep_chunk = 512;
 
     if (pending_tick.phase == .idle) {
-        sim.grid.injectResources();
+        const injection_stats = sim.grid.injectResources();
         sim.grid.decayResources();
         pending_tick.deinit();
-        pending_tick.processor = try TickProcessor.init(&sim.grid);
+        pending_tick.resource_injection_attempts = injection_stats.attempts;
+        pending_tick.resources_injected = injection_stats.injected;
+        pending_tick.resource_injection_blocked = injection_stats.blocked;
+        pending_tick.energy_before = totalOrganismEnergy(&sim.grid);
+        pending_tick.birth_recorder = BirthRecorder.init(allocator);
+        pending_tick.has_birth_recorder = true;
+        pending_tick.processor = try TickProcessor.init(&sim.grid, &pending_tick.birth_recorder);
         pending_tick.phase = .interacting;
     }
 
@@ -444,10 +465,30 @@ fn advancePendingTick(sim: *Simulation, pending_tick: *PendingTick, allocator: s
             }
             if (pending_tick.scan_index >= sim.grid.cells.len) {
                 sim.tick += 1;
+                for (pending_tick.birth_recorder.records.items) |rec| {
+                    sim.lineage_log.record(
+                        sim.tick,
+                        rec.child_lineage,
+                        rec.parent_lineage,
+                        rec.generation,
+                        rec.expr_hash,
+                        @tagName(rec.kind),
+                    ) catch {};
+                }
+                sim.cumulative_stats.births += pending_tick.tick_stats.births;
+                sim.cumulative_stats.novel_placements += pending_tick.tick_stats.novel_placements;
+                sim.cumulative_stats.deaths_energy += pending_tick.deaths_energy;
+                sim.cumulative_stats.deaths_age += pending_tick.deaths_age;
+                sim.cumulative_stats.resources_consumed += pending_tick.tick_stats.resources_consumed;
+                sim.cumulative_stats.interactions += pending_tick.tick_stats.interactions;
                 const result: @import("simulation.zig").StepResult = .{
                     .tick_stats = pending_tick.tick_stats,
                     .deaths_energy = pending_tick.deaths_energy,
                     .deaths_age = pending_tick.deaths_age,
+                    .resource_injection_attempts = pending_tick.resource_injection_attempts,
+                    .resources_injected = pending_tick.resources_injected,
+                    .resource_injection_blocked = pending_tick.resource_injection_blocked,
+                    .net_energy_delta = totalOrganismEnergy(&sim.grid) - pending_tick.energy_before,
                 };
                 pending_tick.deinit();
                 return result;
@@ -459,12 +500,19 @@ fn advancePendingTick(sim: *Simulation, pending_tick: *PendingTick, allocator: s
 
 fn finishCompletedTick(sim: *Simulation, state: *VizState, history: *MetricHistory, allocator: std.mem.Allocator, result: @import("simulation.zig").StepResult) void {
     _ = state;
-    if (result.tick_stats.births > 0) {
-        recordBirthLineages(sim);
-    }
-
     if (sim.tick % sim.config.log_interval == 0) {
-        var m = metrics.collectTickMetrics(&sim.grid, sim.tick, result.tick_stats, result.deaths_energy, result.deaths_age);
+        var m = metrics.collectTickMetrics(
+            &sim.grid,
+            sim.tick,
+            result.tick_stats,
+            result.deaths_energy,
+            result.deaths_age,
+            result.resource_injection_attempts,
+            result.resources_injected,
+            result.resource_injection_blocked,
+            sim.cumulative_stats,
+            result.net_energy_delta,
+        );
 
         if (sim.tick % 1000 == 0) {
             var report = metrics.collectDiversity(&sim.grid, allocator) catch null;
@@ -488,23 +536,15 @@ fn updateStepsPerSecond(state: *VizState) void {
     }
 }
 
-fn recordBirthLineages(sim: *Simulation) void {
-    for (sim.grid.cells) |cell| {
+fn totalOrganismEnergy(grid: *const Grid) f64 {
+    var total: f64 = 0;
+    for (grid.cells) |cell| {
         switch (cell) {
-            .organism => |org| {
-                if (org.age == 0 and org.parent_lineage != null) {
-                    sim.lineage_log.record(
-                        sim.tick,
-                        org.lineage_id,
-                        org.parent_lineage.?,
-                        org.generation,
-                        org.expr.hash(),
-                    ) catch {};
-                }
-            },
+            .organism => |org| total += org.energy,
             else => {},
         }
     }
+    return total;
 }
 
 fn pointInViewport(point: rl.Vector2, viewport: Viewport) bool {

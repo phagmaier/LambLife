@@ -1,0 +1,11 @@
+[
+  {
+    "seed": 1,
+    "run_dir": "runs/verify_001/seed_1",
+    "metrics": "runs/verify_001/seed_1/metrics.csv",
+    "lineage": "runs/verify_001/seed_1/lineage.csv",
+    "snapshots": "runs/verify_001/seed_1/snapshots",
+    "command": "runs/verify_001/seed_1/command.txt",
+    "log": "runs/verify_001/seed_1/run.log"
+  }
+]

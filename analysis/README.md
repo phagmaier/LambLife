@@ -70,6 +70,23 @@ python3 -m analysis.run_batch \
   --extra-arg=--log_interval=50
 ```
 
+For quick debugging sweeps over a few parameter combinations, use:
+
+```bash
+python3 -m analysis.debug_sweep \
+  --output-root runs/debug_sweep_001 \
+  --ticks 200 \
+  --seed 1 \
+  --base-arg=--width=30 \
+  --base-arg=--height=30 \
+  --base-arg=--log_interval=1 \
+  --param initial_organism_fraction=0.05,0.10,0.15 \
+  --param self_similarity_bonus=1,3,5 \
+  --stream
+```
+
+This produces one run directory per parameter combination so you can quickly identify regimes that immediately clog, starve, or remain active.
+
 ## Reporting
 
 Analyze a single run:

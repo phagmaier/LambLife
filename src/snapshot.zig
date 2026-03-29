@@ -378,6 +378,7 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, csv_path: ?[]const u
         .metric_logger = try metrics_mod.MetricLogger.init(csv_path),
         .lineage_log = metrics_mod.LineageLog.init(allocator),
         .snapshot_dir = null,
+        .cumulative_stats = .{},
     };
 
     // Wire up the grid's rng to point at the simulation's prng

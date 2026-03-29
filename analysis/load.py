@@ -26,15 +26,26 @@ class MetricRow:
     novel_placements: int
     unique_structures: int
     max_generation: int
+    resource_injection_attempts: int = 0
+    resources_injected: int = 0
+    resource_injection_blocked: int = 0
+    total_births: int = 0
+    total_novel_placements: int = 0
+    total_deaths_energy: int = 0
+    total_deaths_age: int = 0
+    total_resources_consumed: int = 0
+    total_interactions: int = 0
+    net_energy_delta: float = 0.0
 
 
 @dataclass(frozen=True)
 class LineageRow:
     tick: int
     child_lineage: int
-    parent_lineage: int
+    parent_lineage: int | None
     generation: int
     expr_hash: str
+    birth_kind: str = "reproduction"
 
 
 @dataclass(frozen=True)
@@ -55,6 +66,11 @@ def _parse_float(value: str) -> float:
     return float(value.strip()) if value.strip() else 0.0
 
 
+def _raw_value(row: dict[str, str], key: str) -> str:
+    value = row.get(key)
+    return value if value is not None else ""
+
+
 def load_metrics(path: Path) -> list[MetricRow]:
     rows: list[MetricRow] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
@@ -62,24 +78,34 @@ def load_metrics(path: Path) -> list[MetricRow]:
         for raw in reader:
             rows.append(
                 MetricRow(
-                    tick=_parse_int(raw["tick"]),
-                    population=_parse_int(raw["population"]),
-                    resources=_parse_int(raw["resources"]),
-                    empty=_parse_int(raw["empty"]),
-                    mean_energy=_parse_float(raw["mean_energy"]),
-                    max_energy=_parse_float(raw["max_energy"]),
-                    mean_size=_parse_float(raw["mean_size"]),
-                    max_size=_parse_int(raw["max_size"]),
-                    mean_age=_parse_float(raw["mean_age"]),
-                    max_age=_parse_int(raw["max_age"]),
-                    births=_parse_int(raw["births"]),
-                    deaths_energy=_parse_int(raw["deaths_energy"]),
-                    deaths_age=_parse_int(raw["deaths_age"]),
-                    interactions=_parse_int(raw["interactions"]),
-                    resources_consumed=_parse_int(raw["resources_consumed"]),
-                    novel_placements=_parse_int(raw["novel_placements"]),
-                    unique_structures=_parse_int(raw["unique_structures"]),
-                    max_generation=_parse_int(raw["max_generation"]),
+                    tick=_parse_int(_raw_value(raw, "tick")),
+                    population=_parse_int(_raw_value(raw, "population")),
+                    resources=_parse_int(_raw_value(raw, "resources")),
+                    empty=_parse_int(_raw_value(raw, "empty")),
+                    mean_energy=_parse_float(_raw_value(raw, "mean_energy")),
+                    max_energy=_parse_float(_raw_value(raw, "max_energy")),
+                    mean_size=_parse_float(_raw_value(raw, "mean_size")),
+                    max_size=_parse_int(_raw_value(raw, "max_size")),
+                    mean_age=_parse_float(_raw_value(raw, "mean_age")),
+                    max_age=_parse_int(_raw_value(raw, "max_age")),
+                    births=_parse_int(_raw_value(raw, "births")),
+                    deaths_energy=_parse_int(_raw_value(raw, "deaths_energy")),
+                    deaths_age=_parse_int(_raw_value(raw, "deaths_age")),
+                    interactions=_parse_int(_raw_value(raw, "interactions")),
+                    resources_consumed=_parse_int(_raw_value(raw, "resources_consumed")),
+                    novel_placements=_parse_int(_raw_value(raw, "novel_placements")),
+                    unique_structures=_parse_int(_raw_value(raw, "unique_structures")),
+                    max_generation=_parse_int(_raw_value(raw, "max_generation")),
+                    resource_injection_attempts=_parse_int(_raw_value(raw, "resource_injection_attempts")),
+                    resources_injected=_parse_int(_raw_value(raw, "resources_injected")),
+                    resource_injection_blocked=_parse_int(_raw_value(raw, "resource_injection_blocked")),
+                    total_births=_parse_int(_raw_value(raw, "total_births")),
+                    total_novel_placements=_parse_int(_raw_value(raw, "total_novel_placements")),
+                    total_deaths_energy=_parse_int(_raw_value(raw, "total_deaths_energy")),
+                    total_deaths_age=_parse_int(_raw_value(raw, "total_deaths_age")),
+                    total_resources_consumed=_parse_int(_raw_value(raw, "total_resources_consumed")),
+                    total_interactions=_parse_int(_raw_value(raw, "total_interactions")),
+                    net_energy_delta=_parse_float(_raw_value(raw, "net_energy_delta")),
                 )
             )
     return rows
@@ -92,11 +118,16 @@ def load_lineage(path: Path) -> list[LineageRow]:
         for raw in reader:
             rows.append(
                 LineageRow(
-                    tick=_parse_int(raw["tick"]),
-                    child_lineage=_parse_int(raw["child_lineage"]),
-                    parent_lineage=_parse_int(raw["parent_lineage"]),
-                    generation=_parse_int(raw["generation"]),
-                    expr_hash=raw["expr_hash"].strip(),
+                    tick=_parse_int(_raw_value(raw, "tick")),
+                    child_lineage=_parse_int(_raw_value(raw, "child_lineage")),
+                    parent_lineage=(
+                        _parse_int(_raw_value(raw, "parent_lineage"))
+                        if _raw_value(raw, "parent_lineage").strip()
+                        else None
+                    ),
+                    generation=_parse_int(_raw_value(raw, "generation")),
+                    expr_hash=_raw_value(raw, "expr_hash").strip(),
+                    birth_kind=_raw_value(raw, "birth_kind").strip() or "reproduction",
                 )
             )
     return rows
@@ -160,4 +191,3 @@ def require_runs(root: Path, *, metrics_name: str = "metrics.csv", lineage_name:
 def iter_run_paths(root: Path, *, metrics_name: str = "metrics.csv", lineage_name: str = "lineage.csv") -> Iterable[tuple[Path, Path]]:
     for run in require_runs(root, metrics_name=metrics_name, lineage_name=lineage_name):
         yield run.metrics_path, run.lineage_path
-

@@ -18,13 +18,46 @@ pub const TickStats = struct {
     resources_consumed: u32 = 0,
 };
 
+pub const BirthKind = enum {
+    reproduction,
+    novel,
+};
+
+pub const BirthRecord = struct {
+    child_lineage: u64,
+    parent_lineage: ?u64,
+    generation: u64,
+    expr_hash: u64,
+    kind: BirthKind,
+};
+
+pub const BirthRecorder = struct {
+    records: std.ArrayList(BirthRecord) = .empty,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) BirthRecorder {
+        return .{
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *BirthRecorder) void {
+        self.records.deinit(self.allocator);
+    }
+
+    pub fn record(self: *BirthRecorder, rec: BirthRecord) !void {
+        try self.records.append(self.allocator, rec);
+    }
+};
+
 pub const TickProcessor = struct {
     grid: *Grid,
+    birth_recorder: *BirthRecorder,
     indices: []u32,
     next_idx: usize,
     stats: TickStats,
 
-    pub fn init(grid: *Grid) !TickProcessor {
+    pub fn init(grid: *Grid, birth_recorder: *BirthRecorder) !TickProcessor {
         var org_count: u32 = 0;
         for (grid.cells) |cell| {
             if (cell == .organism) org_count += 1;
@@ -45,6 +78,7 @@ pub const TickProcessor = struct {
 
         return .{
             .grid = grid,
+            .birth_recorder = birth_recorder,
             .indices = indices,
             .next_idx = 0,
             .stats = .{},
@@ -62,7 +96,7 @@ pub const TickProcessor = struct {
 
         const end_idx = @min(self.indices.len, self.next_idx + max_organisms);
         while (self.next_idx < end_idx) : (self.next_idx += 1) {
-            try processOrganism(self.grid, self.indices[self.next_idx], &self.stats);
+            try processOrganism(self.grid, self.birth_recorder, self.indices[self.next_idx], &self.stats);
         }
 
         return self.next_idx >= self.indices.len;
@@ -80,8 +114,8 @@ const NeighborInfo = struct {
 
 /// Process one full tick of organism interactions.
 /// Call this once per simulation tick after resource injection/decay.
-pub fn processTick(grid: *Grid) !TickStats {
-    var processor = try TickProcessor.init(grid);
+pub fn processTick(grid: *Grid, birth_recorder: *BirthRecorder) !TickStats {
+    var processor = try TickProcessor.init(grid, birth_recorder);
     defer processor.deinit();
 
     _ = try processor.advance(@intCast(processor.indices.len));
@@ -108,7 +142,7 @@ pub fn computeSimilarity(a: *const Expr, b: *const Expr, hash_depth_limit: u32) 
 // Per-organism processing
 // ============================================================
 
-fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
+fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, stats: *TickStats) !void {
     const config = grid.config;
 
     // Guard: cell must still be an organism
@@ -190,6 +224,7 @@ fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
 
     handleOutput(
         grid,
+        birth_recorder,
         org_idx,
         neighbor.index,
         result_ab.expr,
@@ -202,6 +237,7 @@ fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
     );
     handleOutput(
         grid,
+        birth_recorder,
         org_idx,
         neighbor.index,
         result_ba.expr,
@@ -220,6 +256,7 @@ fn processOrganism(grid: *Grid, org_idx: u32, stats: *TickStats) !void {
 
 fn handleOutput(
     grid: *Grid,
+    birth_recorder: *BirthRecorder,
     org_idx: u32,
     neighbor_idx: u32,
     result: *const Expr,
@@ -254,7 +291,7 @@ fn handleOutput(
     if (sim_to_parent >= config.similarity_threshold) {
         grid.cells[org_idx].organism.energy += config.self_similarity_bonus;
         if (!already_reproduced.*) {
-            if (tryReproduce(grid, org_idx, result, stats)) {
+            if (tryReproduce(grid, birth_recorder, org_idx, result, stats)) {
                 already_reproduced.* = true;
             }
         }
@@ -262,7 +299,7 @@ fn handleOutput(
         // 4. Novel output — check not similar to either input
         const sim_to_neighbor = computeSimilarity(result, neighbor_expr, config.hash_depth_limit);
         if (sim_to_neighbor < config.similarity_threshold) {
-            tryPlaceNovel(grid, org_idx, result, stats);
+            tryPlaceNovel(grid, birth_recorder, org_idx, result, stats);
         }
     }
 
@@ -283,7 +320,7 @@ fn handleOutput(
 // Reproduction & novel placement
 // ============================================================
 
-fn tryReproduce(grid: *Grid, parent_idx: u32, child_expr: *const Expr, stats: *TickStats) bool {
+fn tryReproduce(grid: *Grid, birth_recorder: *BirthRecorder, parent_idx: u32, child_expr: *const Expr, stats: *TickStats) bool {
     const config = grid.config;
     if (grid.cells[parent_idx] != .organism) return false;
 
@@ -301,33 +338,51 @@ fn tryReproduce(grid: *Grid, parent_idx: u32, child_expr: *const Expr, stats: *T
     const child_energy = parent_energy * config.reproduction_energy_fraction;
     grid.cells[parent_idx].organism.energy -= child_energy;
 
-    // Place child
+    const parent_lineage = grid.cells[parent_idx].organism.lineage_id;
+    const generation = grid.cells[parent_idx].organism.generation + 1;
+    const child_lineage = grid.nextLineageId();
+
     grid.cells[empty_idx] = .{ .organism = .{
         .expr = child_copy,
         .energy = child_energy,
         .age = 0,
-        .lineage_id = grid.nextLineageId(),
-        .parent_lineage = grid.cells[parent_idx].organism.lineage_id,
-        .generation = grid.cells[parent_idx].organism.generation + 1,
+        .lineage_id = child_lineage,
+        .parent_lineage = parent_lineage,
+        .generation = generation,
     } };
     stats.births += 1;
+    birth_recorder.record(.{
+        .child_lineage = child_lineage,
+        .parent_lineage = parent_lineage,
+        .generation = generation,
+        .expr_hash = child_copy.hash(),
+        .kind = .reproduction,
+    }) catch {};
     return true;
 }
 
-fn tryPlaceNovel(grid: *Grid, near_idx: u32, result_expr: *const Expr, stats: *TickStats) void {
+fn tryPlaceNovel(grid: *Grid, birth_recorder: *BirthRecorder, near_idx: u32, result_expr: *const Expr, stats: *TickStats) void {
     const empty_idx = findEmptyNeighbor(grid, near_idx) orelse return;
 
     const copy = Expr.deepCopy(result_expr, grid.allocator) catch return;
+    const child_lineage = grid.nextLineageId();
 
     grid.cells[empty_idx] = .{ .organism = .{
         .expr = copy,
         .energy = grid.config.novel_offspring_initial_energy,
         .age = 0,
-        .lineage_id = grid.nextLineageId(),
+        .lineage_id = child_lineage,
         .parent_lineage = null,
         .generation = 0,
     } };
     stats.novel_placements += 1;
+    birth_recorder.record(.{
+        .child_lineage = child_lineage,
+        .parent_lineage = null,
+        .generation = 0,
+        .expr_hash = copy.hash(),
+        .kind = .novel,
+    }) catch {};
 }
 
 // ============================================================
@@ -739,9 +794,12 @@ test "bare Var result is discarded by handleOutput" {
     var already_reproduced = false;
     var resource_consumed = false;
     var stats = TickStats{};
+    var birth_recorder = BirthRecorder.init(allocator);
+    defer birth_recorder.deinit();
 
     handleOutput(
         &grid,
+        &birth_recorder,
         org_idx,
         0,
         bare_var,

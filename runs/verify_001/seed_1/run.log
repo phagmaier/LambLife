@@ -1,0 +1,23 @@
+LambLife starting: 30x30 grid, seed=1, ticks=1000
+tick=100 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=3447.2/62960.6 size=14.9/500 age=98.0/100 gen=4
+tick=200 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=7026.7/134081.0 size=14.4/500 age=197.5/200 gen=4
+tick=300 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=10605.6/199404.4 size=14.4/500 age=297.5/300 gen=4
+tick=400 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=14189.9/265885.5 size=14.4/500 age=397.5/400 gen=4
+tick=500 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=17787.4/335173.0 size=14.4/500 age=497.2/500 gen=4
+tick=600 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=21351.2/405455.5 size=14.4/500 age=597.0/600 gen=4
+tick=700 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=24918.9/472154.7 size=14.4/500 age=696.3/700 gen=4
+tick=800 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=28483.0/539559.3 size=14.4/500 age=796.0/800 gen=4
+tick=900 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=31994.7/602402.1 size=14.4/500 age=896.0/900 gen=4
+=== Diversity @ tick 1000: 245 unique species ===
+  #1: hash=778c93a8b040cf3f pop=222 avg_energy=16605.2 center=(14,15)
+  #2: hash=40c0c668478ecf90 pop=110 avg_energy=36478.3 center=(14,15)
+  #3: hash=82b3dcb707aae47f pop=59 avg_energy=12761.2 center=(13,13)
+  #4: hash=bcd21b07e6f7e5b9 pop=40 avg_energy=41008.9 center=(16,18)
+  #5: hash=da929c66eb3e88c1 pop=30 avg_energy=46371.9 center=(12,14)
+  #6: hash=4d3be084d3467d01 pop=25 avg_energy=14228.6 center=(17,17)
+  #7: hash=cb3976286ea16de4 pop=18 avg_energy=22804.2 center=(14,13)
+  #8: hash=c8ebdfc8786d6db9 pop=12 avg_energy=42085.8 center=(14,13)
+  #9: hash=2c0252c55f91c01e pop=11 avg_energy=19692.6 center=(12,16)
+  #10: hash=c3cad67cd0489bef pop=9 avg_energy=12074.7 center=(22,17)
+tick=1000 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 energy=35615.3/676040.8 size=14.4/500 age=994.9/1000 gen=4
+Simulation complete. Metrics written to runs/verify_001/seed_1/metrics.csv, lineage to runs/verify_001/seed_1/lineage.csv

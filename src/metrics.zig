@@ -29,9 +29,39 @@ pub const TickMetrics = struct {
     novel_placements: u32,
     unique_structures: u32,
     max_generation: u64,
+    resource_injection_attempts: u32,
+    resources_injected: u32,
+    resource_injection_blocked: u32,
+    total_births: u64,
+    total_novel_placements: u64,
+    total_deaths_energy: u64,
+    total_deaths_age: u64,
+    total_resources_consumed: u64,
+    total_interactions: u64,
+    net_energy_delta: f64,
 };
 
-pub fn collectTickMetrics(grid: *const Grid, tick: u64, tick_stats: TickStats, deaths_energy: u32, deaths_age: u32) TickMetrics {
+pub const CumulativeStats = struct {
+    births: u64 = 0,
+    novel_placements: u64 = 0,
+    deaths_energy: u64 = 0,
+    deaths_age: u64 = 0,
+    resources_consumed: u64 = 0,
+    interactions: u64 = 0,
+};
+
+pub fn collectTickMetrics(
+    grid: *const Grid,
+    tick: u64,
+    tick_stats: TickStats,
+    deaths_energy: u32,
+    deaths_age: u32,
+    resource_injection_attempts: u32,
+    resources_injected: u32,
+    resource_injection_blocked: u32,
+    cumulative: CumulativeStats,
+    net_energy_delta: f64,
+) TickMetrics {
     var pop: u32 = 0;
     var res: u32 = 0;
     var empty: u32 = 0;
@@ -87,13 +117,23 @@ pub fn collectTickMetrics(grid: *const Grid, tick: u64, tick_stats: TickStats, d
         .novel_placements = tick_stats.novel_placements,
         .unique_structures = 0, // filled by diversity tracking
         .max_generation = max_generation,
+        .resource_injection_attempts = resource_injection_attempts,
+        .resources_injected = resources_injected,
+        .resource_injection_blocked = resource_injection_blocked,
+        .total_births = cumulative.births,
+        .total_novel_placements = cumulative.novel_placements,
+        .total_deaths_energy = cumulative.deaths_energy,
+        .total_deaths_age = cumulative.deaths_age,
+        .total_resources_consumed = cumulative.resources_consumed,
+        .total_interactions = cumulative.interactions,
+        .net_energy_delta = net_energy_delta,
     };
 }
 
 pub fn printTickMetrics(m: TickMetrics) void {
     std.debug.print(
         "tick={d} pop={d} res={d} empty={d} births={d} deaths_e={d} deaths_a={d} " ++
-            "interactions={d} consumed={d} novel={d} " ++
+            "interactions={d} consumed={d} novel={d} inj={d}/{d} blocked={d} dE={d:.1} " ++
             "energy={d:.1}/{d:.1} size={d:.1}/{d} age={d:.1}/{d} gen={d}\n",
         .{
             m.tick,
@@ -106,6 +146,10 @@ pub fn printTickMetrics(m: TickMetrics) void {
             m.interactions,
             m.resources_consumed,
             m.novel_placements,
+            m.resources_injected,
+            m.resource_injection_attempts,
+            m.resource_injection_blocked,
+            m.net_energy_delta,
             m.mean_energy,
             m.max_energy,
             m.mean_size,
@@ -226,9 +270,10 @@ pub fn printDiversityReport(report: DiversityReport, tick: u64) void {
 pub const LineageRecord = struct {
     tick: u64,
     child_lineage: u64,
-    parent_lineage: u64,
+    parent_lineage: ?u64,
     generation: u64,
     expr_hash: u64,
+    birth_kind: []const u8,
 };
 
 pub const LineageLog = struct {
@@ -237,7 +282,7 @@ pub const LineageLog = struct {
 
     pub fn init(allocator: std.mem.Allocator) LineageLog {
         return .{
-            .records = .{},
+            .records = .empty,
             .allocator = allocator,
         };
     }
@@ -246,13 +291,14 @@ pub const LineageLog = struct {
         self.records.deinit(self.allocator);
     }
 
-    pub fn record(self: *LineageLog, tick: u64, child_lineage: u64, parent_lineage: u64, generation: u64, expr_hash: u64) !void {
+    pub fn record(self: *LineageLog, tick: u64, child_lineage: u64, parent_lineage: ?u64, generation: u64, expr_hash: u64, birth_kind: []const u8) !void {
         try self.records.append(self.allocator, .{
             .tick = tick,
             .child_lineage = child_lineage,
             .parent_lineage = parent_lineage,
             .generation = generation,
             .expr_hash = expr_hash,
+            .birth_kind = birth_kind,
         });
     }
 
@@ -263,15 +309,26 @@ pub const LineageLog = struct {
         var buf: [4096]u8 = undefined;
         var w = file.writer(&buf);
 
-        try w.interface.writeAll("tick,child_lineage,parent_lineage,generation,expr_hash\n");
+        try w.interface.writeAll("tick,child_lineage,parent_lineage,generation,expr_hash,birth_kind\n");
         for (self.records.items) |rec| {
-            try w.interface.print("{d},{d},{d},{d},{x:0>16}\n", .{
-                rec.tick,
-                rec.child_lineage,
-                rec.parent_lineage,
-                rec.generation,
-                rec.expr_hash,
-            });
+            if (rec.parent_lineage) |parent_lineage| {
+                try w.interface.print("{d},{d},{d},{d},{x:0>16},{s}\n", .{
+                    rec.tick,
+                    rec.child_lineage,
+                    parent_lineage,
+                    rec.generation,
+                    rec.expr_hash,
+                    rec.birth_kind,
+                });
+            } else {
+                try w.interface.print("{d},{d},,{d},{x:0>16},{s}\n", .{
+                    rec.tick,
+                    rec.child_lineage,
+                    rec.generation,
+                    rec.expr_hash,
+                    rec.birth_kind,
+                });
+            }
         }
         try w.interface.flush();
     }
@@ -283,23 +340,22 @@ pub const LineageLog = struct {
 
 pub const MetricLogger = struct {
     file: ?std.fs.File,
-    buf: [4096]u8,
 
     pub fn init(path: ?[]const u8) !MetricLogger {
         if (path) |p| {
-            const file = try std.fs.cwd().createFile(p, .{});
-            var self = MetricLogger{ .file = file, .buf = undefined };
-            var w = file.writer(&self.buf);
-            try w.interface.writeAll(
+            const file = try std.fs.cwd().createFile(p, .{ .read = true });
+            try file.writeAll(
                 "tick,population,resources,empty,mean_energy,max_energy," ++
                     "mean_size,max_size,mean_age,max_age," ++
                     "births,deaths_energy,deaths_age,interactions," ++
-                    "resources_consumed,novel_placements,unique_structures,max_generation\n",
+                    "resources_consumed,novel_placements,unique_structures,max_generation," ++
+                    "resource_injection_attempts,resources_injected,resource_injection_blocked," ++
+                    "total_births,total_novel_placements,total_deaths_energy,total_deaths_age," ++
+                    "total_resources_consumed,total_interactions,net_energy_delta\n",
             );
-            try w.interface.flush();
-            return self;
+            return .{ .file = file };
         }
-        return .{ .file = null, .buf = undefined };
+        return .{ .file = null };
     }
 
     pub fn deinit(self: *MetricLogger) void {
@@ -308,10 +364,12 @@ pub const MetricLogger = struct {
 
     pub fn log(self: *MetricLogger, m: TickMetrics) !void {
         if (self.file) |f| {
-            var w = f.writer(&self.buf);
-            try w.interface.print(
+            try f.seekFromEnd(0);
+            var buf: [512]u8 = undefined;
+            const line = try std.fmt.bufPrint(
+                &buf,
                 "{d},{d},{d},{d},{d:.2},{d:.2},{d:.2},{d},{d:.2},{d}," ++
-                    "{d},{d},{d},{d},{d},{d},{d},{d}\n",
+                    "{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d},{d:.2}\n",
                 .{
                     m.tick,
                     m.population_count,
@@ -331,9 +389,19 @@ pub const MetricLogger = struct {
                     m.novel_placements,
                     m.unique_structures,
                     m.max_generation,
+                    m.resource_injection_attempts,
+                    m.resources_injected,
+                    m.resource_injection_blocked,
+                    m.total_births,
+                    m.total_novel_placements,
+                    m.total_deaths_energy,
+                    m.total_deaths_age,
+                    m.total_resources_consumed,
+                    m.total_interactions,
+                    m.net_energy_delta,
                 },
             );
-            try w.interface.flush();
+            try f.writeAll(line);
         }
     }
 };
@@ -352,7 +420,7 @@ test "collectTickMetrics counts correctly" {
 
     const counts = grid.countCells();
     const stats = TickStats{};
-    const m = collectTickMetrics(&grid, 0, stats, 0, 0);
+    const m = collectTickMetrics(&grid, 0, stats, 0, 0, 0, 0, 0, .{}, 0);
 
     try std.testing.expectEqual(counts.organisms, m.population_count);
     try std.testing.expectEqual(counts.resources, m.resource_count);
@@ -384,8 +452,8 @@ test "lineage log records and round-trips" {
     var log = LineageLog.init(allocator);
     defer log.deinit();
 
-    try log.record(100, 5, 2, 3, 0xDEADBEEF);
-    try log.record(200, 6, 5, 4, 0xCAFEBABE);
+    try log.record(100, 5, 2, 3, 0xDEADBEEF, "reproduction");
+    try log.record(200, 6, 5, 4, 0xCAFEBABE, "reproduction");
 
     try std.testing.expectEqual(@as(usize, 2), log.records.items.len);
     try std.testing.expectEqual(@as(u64, 100), log.records.items[0].tick);
@@ -420,6 +488,103 @@ test "MetricLogger writes CSV header" {
         .novel_placements = 1,
         .unique_structures = 7,
         .max_generation = 3,
+        .resource_injection_attempts = 0,
+        .resources_injected = 0,
+        .resource_injection_blocked = 0,
+        .total_births = 1,
+        .total_novel_placements = 1,
+        .total_deaths_energy = 2,
+        .total_deaths_age = 0,
+        .total_resources_consumed = 3,
+        .total_interactions = 8,
+        .net_energy_delta = 0,
     };
     try logger.log(m);
+}
+
+test "MetricLogger appends rows after header" {
+    const path = "/tmp/lamblife_metric_logger_append_test.csv";
+    std.fs.cwd().deleteFile(path) catch {};
+
+    var logger = try MetricLogger.init(path);
+
+    const m1 = TickMetrics{
+        .tick = 100,
+        .population_count = 10,
+        .resource_count = 5,
+        .empty_count = 85,
+        .mean_energy = 50.0,
+        .max_energy = 100.0,
+        .mean_size = 3.0,
+        .max_size = 10,
+        .mean_age = 5.0,
+        .max_age = 20,
+        .births = 1,
+        .deaths_energy = 2,
+        .deaths_age = 0,
+        .interactions = 8,
+        .resources_consumed = 3,
+        .novel_placements = 1,
+        .unique_structures = 7,
+        .max_generation = 3,
+        .resource_injection_attempts = 5,
+        .resources_injected = 4,
+        .resource_injection_blocked = 1,
+        .total_births = 1,
+        .total_novel_placements = 1,
+        .total_deaths_energy = 2,
+        .total_deaths_age = 0,
+        .total_resources_consumed = 3,
+        .total_interactions = 8,
+        .net_energy_delta = 12.5,
+    };
+    const m2 = TickMetrics{
+        .tick = 200,
+        .population_count = 12,
+        .resource_count = 4,
+        .empty_count = 84,
+        .mean_energy = 55.0,
+        .max_energy = 110.0,
+        .mean_size = 4.0,
+        .max_size = 12,
+        .mean_age = 7.0,
+        .max_age = 30,
+        .births = 2,
+        .deaths_energy = 1,
+        .deaths_age = 0,
+        .interactions = 10,
+        .resources_consumed = 4,
+        .novel_placements = 2,
+        .unique_structures = 8,
+        .max_generation = 4,
+        .resource_injection_attempts = 5,
+        .resources_injected = 2,
+        .resource_injection_blocked = 3,
+        .total_births = 3,
+        .total_novel_placements = 3,
+        .total_deaths_energy = 3,
+        .total_deaths_age = 0,
+        .total_resources_consumed = 7,
+        .total_interactions = 18,
+        .net_energy_delta = -2.5,
+    };
+
+    try logger.log(m1);
+    try logger.log(m2);
+    logger.deinit();
+
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    const allocator = std.testing.allocator;
+    const data = try allocator.alloc(u8, stat.size);
+    defer allocator.free(data);
+    _ = try file.readAll(data);
+
+    try std.testing.expect(std.mem.startsWith(u8, data, "tick,population,resources,empty,mean_energy,max_energy,"));
+    try std.testing.expect(std.mem.indexOf(u8, data, "100,10,5,85,50.00,100.00,3.00,10,5.00,20,1,2,0,8,3,1,7,3,5,4,1,1,1,2,0,3,8,12.50\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, data, "200,12,4,84,55.00,110.00,4.00,12,7.00,30,2,1,0,10,4,2,8,4,5,2,3,3,3,3,0,7,18,-2.50\n") != null);
+
+    std.fs.cwd().deleteFile(path) catch {};
 }
