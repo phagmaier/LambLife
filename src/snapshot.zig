@@ -367,6 +367,16 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, csv_path: ?[]const u
             .biome_map = biome_map,
             .biome_distributions = biome_distributions,
             .resource_exprs = resource_exprs,
+            .resource_expr_sizes = blk: {
+                var sizes: [ResourceKind.COUNT]u32 = undefined;
+                for (resource_exprs, 0..) |expr, i| sizes[i] = expr.size();
+                break :blk sizes;
+            },
+            .resource_expr_hashes = blk: {
+                var hashes: [ResourceKind.COUNT]u64 = undefined;
+                for (resource_exprs, 0..) |expr, i| hashes[i] = expr.hash();
+                break :blk hashes;
+            },
             .next_lineage_id = next_lineage_id,
             .rng = undefined, // will be set below
             .allocator = allocator,
