@@ -169,51 +169,31 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
     const neighbor = findOccupiedNeighbor(grid, org_idx) orelse return;
     stats.interactions += 1;
 
-    // Get neighbor expression (deep copy — we need our own copy for building App nodes)
+    // Use a per-interaction arena for temporary reduction trees.
+    var arena = std.heap.ArenaAllocator.init(grid.allocator);
+    defer arena.deinit();
+    const temp_allocator = arena.allocator();
+
+    // Read the live expressions directly; reduction will clone into the arena.
     const neighbor_is_resource = !neighbor.is_organism;
     const neighbor_expr: *Expr = if (neighbor_is_resource) blk: {
         const kind = grid.cells[neighbor.index].resource.kind;
-        break :blk try Expr.deepCopy(grid.resource_exprs[@intFromEnum(kind)], grid.allocator);
+        break :blk grid.resource_exprs[@intFromEnum(kind)];
     } else blk: {
-        break :blk try Expr.deepCopy(grid.cells[neighbor.index].organism.expr, grid.allocator);
+        break :blk grid.cells[neighbor.index].organism.expr;
     };
-    defer neighbor_expr.deinit(grid.allocator);
+    const org_live_expr = grid.cells[org_idx].organism.expr;
 
-    // Deep-copy organism expression for building App(A, B)
-    const org_expr_1 = try Expr.deepCopy(grid.cells[org_idx].organism.expr, grid.allocator);
-    errdefer org_expr_1.deinit(grid.allocator);
-
-    // Deep-copy neighbor expression for App(A, B)
-    const neighbor_copy_1 = try Expr.deepCopy(neighbor_expr, grid.allocator);
-    errdefer neighbor_copy_1.deinit(grid.allocator);
-
-    // Build App(A, B) and reduce
-    const app_ab = try grid.allocator.create(Expr);
-    app_ab.* = Expr.initArg(org_expr_1, neighbor_copy_1);
-    defer app_ab.deinit(grid.allocator);
-
-    const result_ab = try reduce_mod.reduce(app_ab, config.max_reduction_steps, config.max_expression_size, grid.allocator);
-    defer result_ab.expr.deinit(grid.allocator);
+    // Build stack application nodes and let reduction copy them into the arena.
+    var app_ab = Expr.initArg(org_live_expr, neighbor_expr);
+    const result_ab = try reduce_mod.reduce(&app_ab, config.max_reduction_steps, config.max_expression_size, temp_allocator);
     stats.reductions_attempted += 1;
     stats.beta_steps += result_ab.steps;
     if (result_ab.hit_step_limit) stats.step_limit_hits += 1;
     if (result_ab.hit_size_limit) stats.size_limit_hits += 1;
 
-    // Deep-copy organism expression for building App(B, A)
-    const org_expr_2 = try Expr.deepCopy(grid.cells[org_idx].organism.expr, grid.allocator);
-    errdefer org_expr_2.deinit(grid.allocator);
-
-    // Deep-copy neighbor expression for App(B, A)
-    const neighbor_copy_2 = try Expr.deepCopy(neighbor_expr, grid.allocator);
-    errdefer neighbor_copy_2.deinit(grid.allocator);
-
-    // Build App(B, A) and reduce
-    const app_ba = try grid.allocator.create(Expr);
-    app_ba.* = Expr.initArg(neighbor_copy_2, org_expr_2);
-    defer app_ba.deinit(grid.allocator);
-
-    const result_ba = try reduce_mod.reduce(app_ba, config.max_reduction_steps, config.max_expression_size, grid.allocator);
-    defer result_ba.expr.deinit(grid.allocator);
+    var app_ba = Expr.initArg(neighbor_expr, org_live_expr);
+    const result_ba = try reduce_mod.reduce(&app_ba, config.max_reduction_steps, config.max_expression_size, temp_allocator);
     stats.reductions_attempted += 1;
     stats.beta_steps += result_ba.steps;
     if (result_ba.hit_step_limit) stats.step_limit_hits += 1;
@@ -232,9 +212,6 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
     // Handle outputs
     var already_reproduced = false;
     var resource_consumed = false;
-
-    // We need the organism's live expression pointer for similarity checks
-    const org_live_expr = grid.cells[org_idx].organism.expr;
 
     handleOutput(
         grid,
