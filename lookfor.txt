@@ -1,0 +1,7 @@
+  - Focus on three columns first: resource_injection_blocked, empty, and net_energy_delta.
+  - If blocked ramps up and net_energy_delta stays strongly positive, the next design fix is the energy economy, not the analysis
+    tooling.
+
+  I could not use zig build test as a final verifier because the local Zig test path still hits the same cache/toolchain issue in
+  this environment. The direct zig build -Doptimize=ReleaseFast run -- ... path did work and was enough to verify the new logging
+  end to end.
