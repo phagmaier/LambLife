@@ -26,7 +26,7 @@
 ## Phase 3: Reduction Allocation Rewrite
 
 - [x] Introduce a per-interaction arena allocator for temporary reduction trees.
-- [ ] Refactor reduction APIs so intermediate trees are released in bulk.
+- [x] Refactor reduction APIs so intermediate trees are released in bulk.
 - [x] Remove redundant `Expr.deepCopy` calls in the interaction path where ownership allows.
 - [ ] Re-benchmark after allocator changes before changing semantics further.
 

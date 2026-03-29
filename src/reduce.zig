@@ -43,17 +43,25 @@ pub fn shift(expr: *const Expr, amount: i32, cutoff: u32, allocator: std.mem.All
 /// Returns a newly allocated expression tree — caller owns it.
 /// The `replacement` is NOT consumed; it is deep-copied where needed.
 pub fn substitute(expr: *const Expr, target: u32, replacement: *const Expr, allocator: std.mem.Allocator) !*Expr {
-    return substituteAtDepth(expr, target, replacement, 0, allocator);
+    return substituteWithShift(expr, target, replacement, 0, 0, allocator);
 }
 
-fn substituteAtDepth(expr: *const Expr, target: u32, replacement: *const Expr, depth: u32, allocator: std.mem.Allocator) !*Expr {
+fn substituteWithShift(
+    expr: *const Expr,
+    target: u32,
+    replacement: *const Expr,
+    depth: u32,
+    replacement_base_shift: i32,
+    allocator: std.mem.Allocator,
+) !*Expr {
     const result = try allocator.create(Expr);
     errdefer allocator.destroy(result);
 
     result.* = switch (expr.*) {
         .Var => |n| blk: {
             if (n == target + depth) {
-                const shifted = try shift(replacement, @intCast(depth), 0, allocator);
+                const total_shift: i32 = replacement_base_shift + @as(i32, @intCast(depth));
+                const shifted = try shift(replacement, total_shift, 0, allocator);
                 const val = shifted.*;
                 allocator.destroy(shifted);
                 break :blk val;
@@ -62,13 +70,13 @@ fn substituteAtDepth(expr: *const Expr, target: u32, replacement: *const Expr, d
             }
         },
         .Lam => |body| blk: {
-            const new_body = try substituteAtDepth(body, target, replacement, depth + 1, allocator);
+            const new_body = try substituteWithShift(body, target, replacement, depth + 1, replacement_base_shift, allocator);
             break :blk Expr.initLam(new_body);
         },
         .App => |app| blk: {
-            const new_func = try substituteAtDepth(app.func, target, replacement, depth, allocator);
+            const new_func = try substituteWithShift(app.func, target, replacement, depth, replacement_base_shift, allocator);
             errdefer new_func.deinit(allocator);
-            const new_arg = try substituteAtDepth(app.arg, target, replacement, depth, allocator);
+            const new_arg = try substituteWithShift(app.arg, target, replacement, depth, replacement_base_shift, allocator);
             break :blk Expr.initArg(new_func, new_arg);
         },
     };
@@ -78,15 +86,12 @@ fn substituteAtDepth(expr: *const Expr, target: u32, replacement: *const Expr, d
 /// Perform a single beta reduction step on a top-level redex: App(Lam(body), arg).
 /// Returns a newly allocated result. Caller owns it. The input is NOT freed.
 pub fn betaStep(func_body: *const Expr, arg: *const Expr, allocator: std.mem.Allocator) !*Expr {
-    // 1. Shift arg up by 1 (it's moving under the binder)
-    const shifted_arg = try shift(arg, 1, 0, allocator);
-    defer shifted_arg.deinit(allocator);
-
-    // 2. Substitute shifted_arg for Var(0) in body
-    const substituted = try substitute(func_body, 0, shifted_arg, allocator);
+    // Substitute the argument as if it had already been shifted up by 1 when
+    // moving under the removed binder, without materializing that shifted tree.
+    const substituted = try substituteWithShift(func_body, 0, arg, 0, 1, allocator);
     defer substituted.deinit(allocator);
 
-    // 3. Shift result down by 1 (the outer binder is gone)
+    // Shift result down by 1 (the outer binder is gone)
     return shift(substituted, -1, 0, allocator);
 }
 
