@@ -664,7 +664,7 @@ fn resourceColor(kind: ResourceKind) rl.Color {
 }
 
 fn organismColor(org: Organism) rl.Color {
-    const h = org.expr.hash();
+    const h = org.expr_hash;
     const hue: f32 = @mod(@as(f32, @floatFromInt(h % 2048)) * 0.618033988 * 360.0, 360.0);
     const energy = std.math.clamp(@as(f32, @floatCast(org.energy)) / 120.0, 0.0, 1.0);
     const value = 0.35 + energy * 0.65;
@@ -796,11 +796,11 @@ fn renderInspector(sim: *Simulation, selected_cell: ?u32, expr_pretty: ?[]u8, ex
                 y += line_h;
             }
 
-            const sz = org.expr.size();
+            const sz = org.expr_size;
             drawTextFmt("Size: {d} nodes", .{sz}, x, y, font_size, rl.Color.init(180, 180, 200, 255));
             y += line_h;
 
-            drawTextFmt("Hash: {x:0>16}", .{org.expr.hash()}, x, y, font_size, rl.Color.init(140, 140, 160, 255));
+            drawTextFmt("Hash: {x:0>16}", .{org.expr_hash}, x, y, font_size, rl.Color.init(140, 140, 160, 255));
             y += line_h + 10;
 
             rl.drawText("Expression:", x, y, font_size, rl.Color.init(200, 200, 220, 255));

@@ -1,0 +1,33 @@
+LambLife starting: 30x30 grid, seed=1774777641, ticks=1000
+tick=100 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=35253.9 energy=3476.4/49989.9 size=13.5/499 age=96.5/100 gen=4
+profile tick=100 orgs=900 reductions=1800 beta_steps=11256 size_hits=53 step_hits=36 t_inject=0.00ms t_decay=0.00ms t_interact=76.97ms t_death=0.00ms t_metrics=0.30ms t_snapshot=0.00ms
+tick=200 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=31577.8 energy=7329.3/106676.3 size=14.1/499 age=195.8/200 gen=4
+profile tick=200 orgs=900 reductions=1800 beta_steps=10029 size_hits=38 step_hits=30 t_inject=0.00ms t_decay=0.00ms t_interact=98.78ms t_death=0.00ms t_metrics=0.34ms t_snapshot=0.00ms
+tick=300 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=37447.2 energy=11170.2/160364.6 size=14.1/499 age=295.5/300 gen=4
+profile tick=300 orgs=900 reductions=1800 beta_steps=10650 size_hits=40 step_hits=33 t_inject=0.00ms t_decay=0.00ms t_interact=78.10ms t_death=0.00ms t_metrics=0.31ms t_snapshot=0.00ms
+tick=400 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=31999.8 energy=15062.4/207058.0 size=14.1/499 age=395.5/400 gen=4
+profile tick=400 orgs=900 reductions=1800 beta_steps=11978 size_hits=40 step_hits=40 t_inject=0.00ms t_decay=0.00ms t_interact=112.79ms t_death=0.00ms t_metrics=0.31ms t_snapshot=0.00ms
+tick=500 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=36040.7 energy=18921.4/258752.9 size=14.1/499 age=495.1/500 gen=4
+profile tick=500 orgs=900 reductions=1800 beta_steps=12228 size_hits=56 step_hits=40 t_inject=0.00ms t_decay=0.00ms t_interact=129.56ms t_death=0.00ms t_metrics=0.31ms t_snapshot=0.00ms
+tick=600 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=34408.4 energy=22796.4/311440.5 size=14.1/499 age=595.0/600 gen=4
+profile tick=600 orgs=900 reductions=1800 beta_steps=12876 size_hits=43 step_hits=44 t_inject=0.00ms t_decay=0.00ms t_interact=117.18ms t_death=0.00ms t_metrics=0.32ms t_snapshot=0.00ms
+tick=700 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=35718.0 energy=26680.6/362122.7 size=14.1/499 age=695.0/700 gen=4
+profile tick=700 orgs=900 reductions=1800 beta_steps=11724 size_hits=39 step_hits=41 t_inject=0.00ms t_decay=0.00ms t_interact=121.22ms t_death=0.00ms t_metrics=0.32ms t_snapshot=0.00ms
+tick=800 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=36686.3 energy=30534.6/411800.2 size=14.1/499 age=795.0/800 gen=4
+profile tick=800 orgs=900 reductions=1800 beta_steps=11913 size_hits=43 step_hits=39 t_inject=0.00ms t_decay=0.00ms t_interact=100.52ms t_death=0.00ms t_metrics=0.35ms t_snapshot=0.00ms
+tick=900 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=31951.3 energy=34398.9/464488.8 size=14.1/499 age=895.0/900 gen=4
+profile tick=900 orgs=900 reductions=1800 beta_steps=12983 size_hits=48 step_hits=44 t_inject=0.00ms t_decay=0.00ms t_interact=125.49ms t_death=0.00ms t_metrics=0.34ms t_snapshot=0.00ms
+=== Diversity @ tick 1000: 266 unique species ===
+  #1: hash=778c93a8b040cf3f pop=227 avg_energy=15505.8 center=(14,14)
+  #2: hash=40c0c668478ecf90 pop=134 avg_energy=43759.9 center=(16,14)
+  #3: hash=bcd21b07e6f7e5b9 pop=40 avg_energy=45929.5 center=(16,14)
+  #4: hash=82b3dcb707aae47f pop=39 avg_energy=12732.5 center=(13,14)
+  #5: hash=da929c66eb3e88c1 pop=33 avg_energy=48441.5 center=(13,13)
+  #6: hash=4d3be084d3467d01 pop=33 avg_energy=15679.4 center=(12,15)
+  #7: hash=d00900ec926a0a46 pop=21 avg_energy=67146.1 center=(15,17)
+  #8: hash=cb3976286ea16de4 pop=12 avg_energy=22264.9 center=(15,18)
+  #9: hash=2c0252c55f91c01e pop=9 avg_energy=20043.4 center=(20,13)
+  #10: hash=619b022425490d44 pop=8 avg_energy=16757.8 center=(16,17)
+tick=1000 pop=900 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=900 consumed=0 novel=0 inj=0/4 blocked=4 dE=38772.4 energy=38317.3/523174.6 size=14.1/499 age=995.0/1000 gen=4
+profile tick=1000 orgs=900 reductions=1800 beta_steps=12306 size_hits=49 step_hits=41 t_inject=0.00ms t_decay=0.00ms t_interact=111.38ms t_death=0.00ms t_metrics=0.80ms t_snapshot=0.00ms
+Simulation complete. Metrics written to bench_runs/small_metrics.csv, lineage to bench_runs/small_lineage.csv

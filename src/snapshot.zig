@@ -339,14 +339,14 @@ pub fn load(allocator: std.mem.Allocator, path: []const u8, csv_path: ?[]const u
 
                 const generation = try cur.readU64();
 
-                cell.* = .{ .organism = .{
-                    .expr = expr,
-                    .energy = energy,
-                    .age = age,
-                    .lineage_id = lineage_id,
-                    .parent_lineage = parent_lineage,
-                    .generation = generation,
-                } };
+                cell.* = .{ .organism = Organism.fromExpr(
+                    expr,
+                    energy,
+                    age,
+                    lineage_id,
+                    parent_lineage,
+                    generation,
+                ) };
             },
             else => return error.InvalidSnapshot,
         }

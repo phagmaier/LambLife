@@ -80,7 +80,7 @@ pub fn collectTickMetrics(
                 total_energy += org.energy;
                 if (org.energy > max_energy) max_energy = org.energy;
 
-                const s = org.expr.size();
+                const s = org.expr_size;
                 total_size += s;
                 if (s > max_size) max_size = s;
 
@@ -193,7 +193,7 @@ pub fn collectDiversity(grid: *const Grid, allocator: std.mem.Allocator) !Divers
     for (grid.cells, 0..) |cell, i| {
         switch (cell) {
             .organism => |org| {
-                const h = org.expr.hash();
+                const h = org.expr_hash;
                 const x: f64 = @floatFromInt(i % width);
                 const y: f64 = @floatFromInt(i / width);
 

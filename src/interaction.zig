@@ -156,7 +156,7 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
 
     // Apply maintenance cost
     {
-        const s = grid.cells[org_idx].organism.expr.size();
+        const s = grid.cells[org_idx].organism.expr_size;
         const sf: f64 = @floatFromInt(s);
         grid.cells[org_idx].organism.energy -= config.maintenance_base + config.maintenance_per_node * sf;
         if (s > config.size_penalty_threshold) {
@@ -183,6 +183,14 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
         break :blk grid.cells[neighbor.index].organism.expr;
     };
     const org_live_expr = grid.cells[org_idx].organism.expr;
+    const neighbor_size: u32 = if (neighbor_is_resource)
+        grid.resource_expr_sizes[@intFromEnum(grid.cells[neighbor.index].resource.kind)]
+    else
+        grid.cells[neighbor.index].organism.expr_size;
+    const neighbor_hash: u64 = if (neighbor_is_resource)
+        grid.resource_expr_hashes[@intFromEnum(grid.cells[neighbor.index].resource.kind)]
+    else
+        grid.cells[neighbor.index].organism.expr_hash;
 
     // Build stack application nodes and let reduction copy them into the arena.
     var app_ab = Expr.initArg(org_live_expr, neighbor_expr);
@@ -221,6 +229,8 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
         result_ab.expr,
         org_live_expr,
         neighbor_expr,
+        neighbor_size,
+        neighbor_hash,
         neighbor_is_resource,
         &already_reproduced,
         &resource_consumed,
@@ -234,6 +244,8 @@ fn processOrganism(grid: *Grid, birth_recorder: *BirthRecorder, org_idx: u32, st
         result_ba.expr,
         org_live_expr,
         neighbor_expr,
+        neighbor_size,
+        neighbor_hash,
         neighbor_is_resource,
         &already_reproduced,
         &resource_consumed,
@@ -253,6 +265,8 @@ fn handleOutput(
     result: *const Expr,
     org_expr: *const Expr,
     neighbor_expr: *const Expr,
+    neighbor_size: u32,
+    neighbor_hash: u64,
     neighbor_is_resource: bool,
     already_reproduced: *bool,
     resource_consumed: *bool,
@@ -269,8 +283,7 @@ fn handleOutput(
     if (result.* == .Var) return;
 
     // 2. Simplification bonus
-    const org_size = org_expr.size();
-    const neighbor_size = neighbor_expr.size();
+    const org_size = grid.cells[org_idx].organism.expr_size;
     const input_total: u32 = org_size + neighbor_size;
     if (result_size < input_total) {
         const reduction: f64 = @floatFromInt(input_total - result_size);
@@ -297,8 +310,7 @@ fn handleOutput(
     // 5. Resource consumption
     if (neighbor_is_resource and !resource_consumed.* and grid.cells[neighbor_idx] == .resource) {
         const result_hash = result.hash();
-        const resource_hash = neighbor_expr.hash();
-        if (result_hash != resource_hash) {
+        if (result_hash != neighbor_hash) {
             grid.cells[neighbor_idx] = .empty;
             grid.cells[org_idx].organism.energy += config.resource_consumption_bonus;
             resource_consumed.* = true;
@@ -333,20 +345,20 @@ fn tryReproduce(grid: *Grid, birth_recorder: *BirthRecorder, parent_idx: u32, ch
     const generation = grid.cells[parent_idx].organism.generation + 1;
     const child_lineage = grid.nextLineageId();
 
-    grid.cells[empty_idx] = .{ .organism = .{
-        .expr = child_copy,
-        .energy = child_energy,
-        .age = 0,
-        .lineage_id = child_lineage,
-        .parent_lineage = parent_lineage,
-        .generation = generation,
-    } };
+    grid.cells[empty_idx] = .{ .organism = grid_mod.Organism.fromExpr(
+        child_copy,
+        child_energy,
+        0,
+        child_lineage,
+        parent_lineage,
+        generation,
+    ) };
     stats.births += 1;
     birth_recorder.record(.{
         .child_lineage = child_lineage,
         .parent_lineage = parent_lineage,
         .generation = generation,
-        .expr_hash = child_copy.hash(),
+        .expr_hash = grid.cells[empty_idx].organism.expr_hash,
         .kind = .reproduction,
     }) catch {};
     return true;
@@ -358,20 +370,20 @@ fn tryPlaceNovel(grid: *Grid, birth_recorder: *BirthRecorder, near_idx: u32, res
     const copy = Expr.deepCopy(result_expr, grid.allocator) catch return;
     const child_lineage = grid.nextLineageId();
 
-    grid.cells[empty_idx] = .{ .organism = .{
-        .expr = copy,
-        .energy = grid.config.novel_offspring_initial_energy,
-        .age = 0,
-        .lineage_id = child_lineage,
-        .parent_lineage = null,
-        .generation = 0,
-    } };
+    grid.cells[empty_idx] = .{ .organism = grid_mod.Organism.fromExpr(
+        copy,
+        grid.config.novel_offspring_initial_energy,
+        0,
+        child_lineage,
+        null,
+        0,
+    ) };
     stats.novel_placements += 1;
     birth_recorder.record(.{
         .child_lineage = child_lineage,
         .parent_lineage = null,
         .generation = 0,
-        .expr_hash = copy.hash(),
+        .expr_hash = grid.cells[empty_idx].organism.expr_hash,
         .kind = .novel,
     }) catch {};
 }
@@ -802,6 +814,8 @@ test "bare Var result is discarded by handleOutput" {
         bare_var,
         grid.cells[org_idx].organism.expr,
         neighbor_expr,
+        neighbor_expr.size(),
+        neighbor_expr.hash(),
         false,
         &already_reproduced,
         &resource_consumed,

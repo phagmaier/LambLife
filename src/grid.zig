@@ -27,11 +27,38 @@ pub const ResourceInjectionStats = struct {
 
 pub const Organism = struct {
     expr: *Expr,
+    expr_size: u32,
+    expr_hash: u64,
     energy: f64,
     age: u64,
     lineage_id: u64,
     parent_lineage: ?u64,
     generation: u64,
+
+    pub fn fromExpr(
+        expr: *Expr,
+        energy: f64,
+        age: u64,
+        lineage_id: u64,
+        parent_lineage: ?u64,
+        generation: u64,
+    ) Organism {
+        return .{
+            .expr = expr,
+            .expr_size = expr.size(),
+            .expr_hash = expr.hash(),
+            .energy = energy,
+            .age = age,
+            .lineage_id = lineage_id,
+            .parent_lineage = parent_lineage,
+            .generation = generation,
+        };
+    }
+
+    pub fn refreshCache(self: *Organism) void {
+        self.expr_size = self.expr.size();
+        self.expr_hash = self.expr.hash();
+    }
 };
 
 pub const Cell = union(enum) {
@@ -47,6 +74,8 @@ pub const Grid = struct {
     /// Index as: biome * ResourceKind.COUNT + resource_index
     biome_distributions: []f32,
     resource_exprs: [ResourceKind.COUNT]*Expr,
+    resource_expr_sizes: [ResourceKind.COUNT]u32,
+    resource_expr_hashes: [ResourceKind.COUNT]u64,
     next_lineage_id: u64,
     rng: std.Random,
     allocator: std.mem.Allocator,
@@ -61,6 +90,8 @@ pub const Grid = struct {
             .biome_map = try allocator.alloc(u8, grid_size),
             .biome_distributions = try allocator.alloc(f32, num_biomes * ResourceKind.COUNT),
             .resource_exprs = undefined,
+            .resource_expr_sizes = undefined,
+            .resource_expr_hashes = undefined,
             .next_lineage_id = 0,
             .rng = rng,
             .allocator = allocator,
@@ -150,6 +181,11 @@ pub const Grid = struct {
 
         // Zero: Lam(Lam(Var(0))) — same structure as False
         self.resource_exprs[@intFromEnum(ResourceKind.zero)] = try buildLamLamVar(self.allocator, 0);
+
+        for (self.resource_exprs, 0..) |expr, i| {
+            self.resource_expr_sizes[i] = expr.size();
+            self.resource_expr_hashes[i] = expr.hash();
+        }
     }
 
     fn buildLamVar(allocator: std.mem.Allocator, index: u32) !*Expr {
@@ -256,28 +292,28 @@ pub const Grid = struct {
             const expr = try buildSeedReplicator(self.allocator, self.rng);
             // Apply a slight mutation to each seeded replicator for diversity
             try mutation.mutate(expr, self.allocator, self.rng, self.config);
-            self.cells[idx] = .{ .organism = .{
-                .expr = expr,
-                .energy = self.config.initial_organism_energy,
-                .age = 0,
-                .lineage_id = self.nextLineageId(),
-                .parent_lineage = null,
-                .generation = 0,
-            } };
+            self.cells[idx] = .{ .organism = Organism.fromExpr(
+                expr,
+                self.config.initial_organism_energy,
+                0,
+                self.nextLineageId(),
+                null,
+                0,
+            ) };
         }
 
         // Place remaining random organisms
         for (indices[num_replicators..num_organisms]) |idx| {
             const depth = self.rng.intRangeAtMost(u32, self.config.initial_expr_min_depth, self.config.initial_expr_max_depth);
             const expr = try Expr.initRandom(depth, 0, 0, self.allocator, self.rng);
-            self.cells[idx] = .{ .organism = .{
-                .expr = expr,
-                .energy = self.config.initial_organism_energy,
-                .age = 0,
-                .lineage_id = self.nextLineageId(),
-                .parent_lineage = null,
-                .generation = 0,
-            } };
+            self.cells[idx] = .{ .organism = Organism.fromExpr(
+                expr,
+                self.config.initial_organism_energy,
+                0,
+                self.nextLineageId(),
+                null,
+                0,
+            ) };
         }
 
         // Place resources

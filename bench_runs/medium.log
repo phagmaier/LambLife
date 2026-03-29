@@ -1,0 +1,58 @@
+LambLife starting: 80x80 grid, seed=1774777757, ticks=5000
+tick=250 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=222301.9 energy=8819.6/216473.0 size=13.6/501 age=247.2/250 gen=4
+profile tick=250 orgs=6400 reductions=12800 beta_steps=64089 size_hits=347 step_hits=166 t_inject=0.00ms t_decay=0.00ms t_interact=517.28ms t_death=0.01ms t_metrics=2.05ms t_snapshot=0.00ms
+tick=500 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=249286.5 energy=17860.1/423871.0 size=13.7/501 age=496.9/500 gen=4
+profile tick=500 orgs=6400 reductions=12800 beta_steps=64873 size_hits=344 step_hits=171 t_inject=0.00ms t_decay=0.00ms t_interact=593.91ms t_death=0.01ms t_metrics=2.09ms t_snapshot=0.00ms
+tick=750 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=232773.3 energy=26943.7/647086.9 size=13.7/501 age=746.8/750 gen=4
+profile tick=750 orgs=6400 reductions=12800 beta_steps=65154 size_hits=340 step_hits=173 t_inject=0.00ms t_decay=0.00ms t_interact=568.91ms t_death=0.01ms t_metrics=2.10ms t_snapshot=0.00ms
+=== Diversity @ tick 1000: 1246 unique species ===
+  #1: hash=778c93a8b040cf3f pop=1697 avg_energy=16512.4 center=(39,39)
+  #2: hash=40c0c668478ecf90 pop=826 avg_energy=39266.5 center=(39,41)
+  #3: hash=82b3dcb707aae47f pop=394 avg_energy=13284.4 center=(42,40)
+  #4: hash=bcd21b07e6f7e5b9 pop=236 avg_energy=41344.8 center=(42,40)
+  #5: hash=da929c66eb3e88c1 pop=231 avg_energy=42833.5 center=(40,39)
+  #6: hash=4d3be084d3467d01 pop=156 avg_energy=15998.6 center=(36,39)
+  #7: hash=d00900ec926a0a46 pop=117 avg_energy=49441.5 center=(32,41)
+  #8: hash=cb3976286ea16de4 pop=84 avg_energy=28587.4 center=(36,38)
+  #9: hash=c8ebdfc8786d6db9 pop=82 avg_energy=41744.7 center=(42,41)
+  #10: hash=2c0252c55f91c01e pop=81 avg_energy=19749.0 center=(39,38)
+tick=1000 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=231692.3 energy=35965.9/876647.0 size=13.6/501 age=996.2/1000 gen=4
+profile tick=1000 orgs=6400 reductions=12800 beta_steps=62656 size_hits=319 step_hits=166 t_inject=0.00ms t_decay=0.00ms t_interact=564.73ms t_death=0.01ms t_metrics=4.33ms t_snapshot=0.00ms
+tick=1250 pop=6400 res=0 empty=0 births=1 deaths_e=0 deaths_a=0 interactions=6399 consumed=0 novel=0 inj=0/32 blocked=32 dE=233125.5 energy=45032.1/1112460.9 size=13.6/501 age=1245.4/1250 gen=4
+profile tick=1250 orgs=6399 reductions=12798 beta_steps=64294 size_hits=346 step_hits=167 t_inject=0.00ms t_decay=0.00ms t_interact=547.83ms t_death=0.01ms t_metrics=2.03ms t_snapshot=0.00ms
+tick=1500 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=236605.0 energy=54125.3/1327812.6 size=13.6/501 age=1495.2/1500 gen=4
+profile tick=1500 orgs=6400 reductions=12800 beta_steps=68073 size_hits=333 step_hits=182 t_inject=0.00ms t_decay=0.00ms t_interact=586.98ms t_death=0.01ms t_metrics=2.07ms t_snapshot=0.00ms
+tick=1750 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=227903.4 energy=63174.1/1566051.5 size=13.6/501 age=1745.2/1750 gen=4
+profile tick=1750 orgs=6400 reductions=12800 beta_steps=65515 size_hits=349 step_hits=179 t_inject=0.00ms t_decay=0.00ms t_interact=531.72ms t_death=0.01ms t_metrics=2.11ms t_snapshot=0.00ms
+=== Diversity @ tick 2000: 1246 unique species ===
+  #1: hash=778c93a8b040cf3f pop=1695 avg_energy=33079.4 center=(39,39)
+  #2: hash=40c0c668478ecf90 pop=827 avg_energy=78783.8 center=(39,41)
+  #3: hash=82b3dcb707aae47f pop=394 avg_energy=26583.5 center=(42,40)
+  #4: hash=bcd21b07e6f7e5b9 pop=237 avg_energy=83045.6 center=(42,40)
+  #5: hash=da929c66eb3e88c1 pop=231 avg_energy=86238.4 center=(40,39)
+  #6: hash=4d3be084d3467d01 pop=156 avg_energy=32110.7 center=(36,39)
+  #7: hash=d00900ec926a0a46 pop=117 avg_energy=99953.1 center=(32,41)
+  #8: hash=cb3976286ea16de4 pop=84 avg_energy=57498.0 center=(36,38)
+  #9: hash=c8ebdfc8786d6db9 pop=82 avg_energy=84318.3 center=(42,41)
+  #10: hash=2c0252c55f91c01e pop=80 avg_energy=40001.0 center=(39,37)
+tick=2000 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=237621.3 energy=72266.4/1789404.3 size=13.6/501 age=1995.2/2000 gen=4
+profile tick=2000 orgs=6400 reductions=12800 beta_steps=64712 size_hits=332 step_hits=171 t_inject=0.00ms t_decay=0.00ms t_interact=538.98ms t_death=0.01ms t_metrics=4.11ms t_snapshot=0.00ms
+tick=2250 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=237332.5 energy=81332.5/2004006.3 size=13.6/501 age=2245.2/2250 gen=4
+profile tick=2250 orgs=6400 reductions=12800 beta_steps=67958 size_hits=354 step_hits=181 t_inject=0.00ms t_decay=0.00ms t_interact=562.05ms t_death=0.01ms t_metrics=2.74ms t_snapshot=0.00ms
+tick=2500 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=235248.8 energy=90377.8/2226432.9 size=13.6/501 age=2495.2/2500 gen=4
+profile tick=2500 orgs=6400 reductions=12800 beta_steps=65357 size_hits=346 step_hits=171 t_inject=0.00ms t_decay=0.00ms t_interact=578.44ms t_death=0.01ms t_metrics=2.14ms t_snapshot=0.00ms
+tick=2750 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=234703.7 energy=99456.0/2459947.8 size=13.6/501 age=2745.2/2750 gen=4
+profile tick=2750 orgs=6400 reductions=12800 beta_steps=66904 size_hits=326 step_hits=180 t_inject=0.00ms t_decay=0.00ms t_interact=562.89ms t_death=0.01ms t_metrics=2.05ms t_snapshot=0.00ms
+=== Diversity @ tick 3000: 1246 unique species ===
+  #1: hash=778c93a8b040cf3f pop=1695 avg_energy=49634.2 center=(39,39)
+  #2: hash=40c0c668478ecf90 pop=827 avg_energy=118357.1 center=(39,41)
+  #3: hash=82b3dcb707aae47f pop=394 avg_energy=39864.4 center=(42,40)
+  #4: hash=bcd21b07e6f7e5b9 pop=237 avg_energy=125024.9 center=(42,40)
+  #5: hash=da929c66eb3e88c1 pop=231 avg_energy=129157.4 center=(40,39)
+  #6: hash=4d3be084d3467d01 pop=156 avg_energy=48117.4 center=(36,39)
+  #7: hash=d00900ec926a0a46 pop=117 avg_energy=150507.9 center=(32,41)
+  #8: hash=cb3976286ea16de4 pop=84 avg_energy=86502.9 center=(36,38)
+  #9: hash=c8ebdfc8786d6db9 pop=82 avg_energy=127090.3 center=(42,41)
+  #10: hash=2c0252c55f91c01e pop=80 avg_energy=59969.6 center=(39,37)
+tick=3000 pop=6400 res=0 empty=0 births=0 deaths_e=0 deaths_a=0 interactions=6400 consumed=0 novel=0 inj=0/32 blocked=32 dE=238404.2 energy=108522.0/2686268.6 size=13.6/501 age=2995.2/3000 gen=4
+profile tick=3000 orgs=6400 reductions=12800 beta_steps=63839 size_hits=342 step_hits=162 t_inject=0.00ms t_decay=0.00ms t_interact=553.25ms t_death=0.01ms t_metrics=4.14ms t_snapshot=0.00ms

@@ -32,9 +32,9 @@
 
 ## Phase 4: Expression Metadata Caching
 
-- [ ] Cache organism expression size.
-- [ ] Cache organism expression hash.
-- [ ] Reuse cached metadata for maintenance, simplification, similarity, and metrics.
+- [x] Cache organism expression size.
+- [x] Cache organism expression hash.
+- [x] Reuse cached metadata for maintenance, simplification, similarity, and metrics.
 - [ ] Update caches on mutation, reproduction, novel placement, and organism replacement.
 
 ## Phase 5: Simulation Loop Cleanup
